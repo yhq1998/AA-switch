@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://aaswitch.omniapexroute.com"><strong>aaswitch.omniapexroute.com</strong></a>
+  <a href="https://aaswitch.omniapexroute.com">Website</a>
   &nbsp;·&nbsp;
   <a href="README.zh-CN.md">中文</a>
 </p>
