@@ -134,7 +134,7 @@ NOTARY_PROFILE=aaswitch \
 - 脚本把 `config.toml` 的默认 provider 固定为一个名字，两种模式都不改这一行，只改 provider 块里的 `base_url` / `http_headers`：API 模式写地址，账号模式注释掉，走 OpenAI 官方后端。
 - 历史上出现过的其他 provider 名（配置里的、数据库里的、会话文件里的）都写成指向同一地址的别名块。指向别处且自带 `env_key` 的 provider 原样保留。
 - 内置的 `openai` 不允许被覆盖，记成 `openai` 的会话会把首行 `session_meta` 里的 provider 改成默认名，数据库里对应字段一并更新。会话正文不动。
-- 写入前把 `config.toml`、`auth.json`、要改的会话文件和数据库快照复制到 `~/.codex/codex-mode-backups/<时间>/`；写完让 `codex doctor` 读一遍新配置，读不通或登录失败就整体恢复。
+- 写入前把 `config.toml`、`auth.json`、要改的会话文件和数据库快照复制到 `~/.codex/codex-mode-backups/<时间>/`；写完让 Codex 读一遍新配置（`codex login status`，它会完整加载配置且不联网，比 `codex doctor` 快几秒），读不通或登录失败就整体恢复。
 - 切换前若处于 ChatGPT 登录态，把 `auth.json` 存一份到 `~/.codex/codex-mode-auth/chatgpt.json`；切回账号模式时直接恢复，不用重新登录。token 过期时 Codex 会自己提示登录。
 
 ## 文件

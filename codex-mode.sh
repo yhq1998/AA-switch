@@ -30,7 +30,7 @@
 #   非交互配置：CODEX_MODE_BASE_URL、CODEX_MODE_HEADERS（名称=值，逗号分隔）、CODEX_MODE_KEY_STDIN=1（从标准输入读 key，
 #   可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。
 set -eu
-CODEX_MODE_VERSION="2.1.2"
+CODEX_MODE_VERSION="2.1.3"
 
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CFG="$CODEX_HOME/config.toml"
@@ -218,11 +218,11 @@ write_config() {  # write_config api|chatgpt
 }
 current_mode() { if [ -n "$(section_value "$(preamble_provider)" base_url active)" ]; then echo api; else echo chatgpt; fi; }
 mode_word() { local p; p="$(preamble_provider)"; if [ -z "$p" ] || [ "$p" = openai ]; then echo none; else current_mode; fi; }
-check_config() {  # 让 Codex 自己读一遍新配置
+check_config() {  # 让 Codex 自己读一遍新配置：login status 会完整加载配置（语法、provider 引用都查），0.02 秒；doctor 要联网探测，动辄 5～9 秒
   local out
   [ -n "$CODEX" ] || return 0
-  out="$("$CODEX" doctor 2>&1 | sed -E $'s/\x1b\\[[0-9;?]*[A-Za-z]//g' | tr '\r' '\n' || true)"
-  if printf '%s\n' "$out" | grep -q '✗ config'; then printf '%s\n' "$out" | grep -E 'config|^[[:space:]]+·' | sort -u >&2; return 1; fi
+  out="$("$CODEX" login status </dev/null 2>&1 || true)"
+  if printf '%s\n' "$out" | grep -qi 'error loading config'; then printf '%s\n' "$out" | grep -i 'error' >&2; return 1; fi
 }
 
 # ---------- 备份、恢复、会话 ----------
@@ -270,9 +270,9 @@ quit_app() {
   if app_running; then
     say "正在退出 ${APP_NAME}…"
     osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
-    for _ in $(seq 1 30); do app_running || break; sleep 1; done
+    for _ in $(seq 1 150); do app_running || break; sleep 0.2; done   # 最多等 30 秒
     if app_running; then die "$APP_NAME 没有退出，请手动 ⌘Q 后重试。"; fi
-    sleep 1
+    sleep 0.3   # 进程刚退出，给文件句柄一点释放时间
   fi
   if pgrep -x codex >/dev/null 2>&1 || pgrep -x codex-app-server >/dev/null 2>&1; then
     die "还有 codex 命令行或 IDE 会话在运行，请先关闭它们再切换，避免同时写会话记录。"
