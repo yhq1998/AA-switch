@@ -205,7 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func showConfigureForm(baseURL: String, headers: String, error: String?) {
         let alert = NSAlert()
         alert.messageText = "配置 API"
-        alert.informativeText = error ?? "填写你的 API 服务地址和 key。key 只保存在 macOS 钥匙串里。"
+        alert.informativeText = error ?? "填写你的 API 服务地址和 key。key 只保存在 macOS 钥匙串里。换地址时记得把 key 也换成该地址对应的。"
         if error != nil { alert.alertStyle = .warning }
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 118))
         func row(_ title: String, _ field: NSTextField, y: CGFloat) {
@@ -216,9 +216,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let urlField = NSTextField(); urlField.stringValue = baseURL; urlField.placeholderString = "https://api.example.com/v1"
         let headerField = NSTextField(); headerField.stringValue = headers; headerField.placeholderString = "名称=值，多个用逗号分隔；通常留空"
-        let keyField = NSSecureTextField()
-        let hasKey = !baseURL.isEmpty && run(["has-key", baseURL]).code == 0
-        keyField.placeholderString = hasKey ? "留空则沿用已保存的 key" : "sk-…"
+        let keyField = NSTextField()   // 明文显示，并回填当前地址已保存的 key，方便核对
+        let savedKey = baseURL.isEmpty ? "" : run(["key", baseURL]).out.trimmingCharacters(in: .whitespacesAndNewlines)
+        keyField.stringValue = savedKey
+        keyField.placeholderString = "sk-…"
         row("API 地址", urlField, y: 88); row("额外请求头", headerField, y: 48); row("API key", keyField, y: 8)
         urlField.nextKeyView = headerField; headerField.nextKeyView = keyField; keyField.nextKeyView = urlField
         alert.accessoryView = view

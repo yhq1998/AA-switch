@@ -12,6 +12,7 @@
 #   codex-mode version      输出脚本版本号
 #   codex-mode config       输出已保存的地址和请求头（不含 key），供程序读取
 #   codex-mode has-key URL  钥匙串里有没有该地址的 key（退出码 0 表示有）
+#   codex-mode key URL      输出钥匙串里该地址的 key（供配置表单回填）
 #
 # 原理：Codex 把每条会话创建时用的 provider 名记在会话里，配置里必须有同名 provider 才能继续该会话。
 #   本脚本把 config.toml 的默认 provider 固定为一个名字，两种模式都不改这一行，只改 provider 块里的
@@ -29,7 +30,7 @@
 #   非交互配置：CODEX_MODE_BASE_URL、CODEX_MODE_HEADERS（名称=值，逗号分隔）、CODEX_MODE_KEY_STDIN=1（从标准输入读 key，
 #   可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。
 set -eu
-CODEX_MODE_VERSION="2.1.1"
+CODEX_MODE_VERSION="2.1.2"
 
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CFG="$CODEX_HOME/config.toml"
@@ -53,7 +54,7 @@ fi
 
 say() { echo "$*" >&2; }
 die() { echo "错误：$*" >&2; exit 1; }
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 # ---------- 配置文件 ~/.codex/codex-mode.conf（key=value，不会被 source 执行） ----------
 conf_get() { if [ -f "$CONF" ]; then sed -n "s/^$1=//p" "$CONF" | head -n1; fi; }
@@ -453,5 +454,6 @@ case "$1" in
   version) echo "$CODEX_MODE_VERSION" ;;
   config) show_config ;;
   has-key) [ -n "${2:-}" ] && valid_url "$2" || die "用法：codex-mode has-key URL"; [ -n "$(kc_get "$(kc_service "$2")")" ] ;;
+  key) [ -n "${2:-}" ] && valid_url "$2" || die "用法：codex-mode key URL"; kc_get "$(kc_service "$2")" ;;
   *) usage ;;
 esac
