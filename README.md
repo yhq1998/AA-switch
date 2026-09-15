@@ -17,6 +17,10 @@
 
 ---
 
+## Why "AA"?
+
+**AA** stands for **API – Account**. AA Switch does exactly one thing: it flips Codex between your own **API** key and your ChatGPT **Account**.
+
 ## What it does
 
 AA Switch lives in your Mac's menu bar and shows which side Codex is on right now. Click it to flip.

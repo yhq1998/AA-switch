@@ -17,6 +17,10 @@
 
 ---
 
+## 为什么叫 "AA"？
+
+**AA** 是 **API – Account** 的缩写。AA Switch 只做一件事：让 Codex 在你自己的 **API** key 和 ChatGPT **账号（Account）** 之间来回切换。
+
 ## 它能做什么
 
 AA Switch 住在 Mac 的菜单栏里，一眼就能看到 Codex 现在走的是哪边。点一下就切。
