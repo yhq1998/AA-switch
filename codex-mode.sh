@@ -29,7 +29,7 @@
 #   非交互配置：CODEX_MODE_BASE_URL、CODEX_MODE_HEADERS（名称=值，逗号分隔）、CODEX_MODE_KEY_STDIN=1（从标准输入读 key，
 #   可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。
 set -eu
-CODEX_MODE_VERSION="2.1.0"
+CODEX_MODE_VERSION="2.1.1"
 
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CFG="$CODEX_HOME/config.toml"
@@ -297,6 +297,18 @@ restore_chatgpt_auth() {  # 有存档就恢复并确认 Codex 认它；成功返
 }
 need_codex() { [ -n "$CODEX" ] && [ -x "$CODEX" ] || die "找不到 Codex 命令行（应用里自带的 codex 或 PATH 里的 codex）：${CODEX:-未找到}，可用 CODEX_BIN 指定。"; }
 
+check_key() {  # check_key URL KEY：登录前先用 key 探测地址，明确被拒（401/403）就停下，其他情况放行
+  local code hdrs=() pair
+  if [ -n "$HEADERS" ]; then
+    IFS=',' read -r -a pairs <<< "$(toml_to_pairs "$HEADERS")"
+    for pair in "${pairs[@]}"; do pair="${pair#"${pair%%[![:space:]]*}"}"; hdrs+=(-H "${pair%%=*}: ${pair#*=}"); done
+  fi
+  code="$(curl -s -o /dev/null -m 15 -w '%{http_code}' "${1%/}/models" -H "Authorization: Bearer $2" ${hdrs[@]+"${hdrs[@]}"} 2>/dev/null || echo 000)"
+  case "$code" in
+    401|403) die "这个 API key 在 ${1} 上无效（HTTP ${code}）。每个网关的 key 不通用，请在“配置 API 地址 / key”里填写该地址对应的 key。" ;;
+  esac
+}
+
 # ---------- 一次切换的公共部分：备份 → 规划 → 写配置 → 统一会话 → 校验 ----------
 prepare_switch() {  # prepare_switch api|chatgpt
   mkdir -p "$BK"
@@ -337,6 +349,7 @@ mode_api() {
   need_codex; load_conf
   if [ -z "$BASE_URL" ]; then say "还没有配置 API 地址，先配置一次："; do_configure; fi
   local key; key="$(get_key)" || exit 1
+  check_key "$BASE_URL" "$key"
   quit_app
   prepare_switch api
   if ! printf '%s' "$key" | "$CODEX" login --with-api-key >/dev/null; then

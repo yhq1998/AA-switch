@@ -312,7 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if busy {
             add("正在切换，Codex 会退出并重新打开…", enabled: false)
         } else {
-            add("切换到 API 模式", #selector(switchToApi), enabled: mode != "api" && mode != "missing")
+            add(mode == "api" ? "重新登录 API（换 key 后用）" : "切换到 API 模式", #selector(switchToApi), enabled: mode != "missing")
             add("切换到 ChatGPT 账号", #selector(switchToChatGPT), enabled: mode != "chatgpt" && mode != "missing")
         }
         menu.addItem(.separator())
