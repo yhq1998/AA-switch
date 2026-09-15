@@ -1,0 +1,5 @@
+.DS_Store
+menubar/dist/
+# 由 SVG 生成的图标，构建时自动重建
+menubar/icon/AppIcon.icns
+menubar/icon/menubar/
