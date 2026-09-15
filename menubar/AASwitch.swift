@@ -329,11 +329,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if busy {
             add("正在切换，Codex 会退出并重新打开…", enabled: false)
         } else {
-            add(mode == "api" ? "重新登录 API（换 key 后用）" : "切换到 API 模式", #selector(switchToApi), enabled: mode != "missing")
-            add("切换到 ChatGPT 账号", #selector(switchToChatGPT), enabled: mode != "chatgpt" && mode != "missing")
+            // 两项标题固定，当前模式打勾置灰：一眼看出现在在哪、要换模式点哪
+            add("切换到 API 模式", #selector(switchToApi), enabled: mode != "api" && mode != "missing").state = mode == "api" ? .on : .off
+            add("切换到 ChatGPT 账号", #selector(switchToChatGPT), enabled: mode != "chatgpt" && mode != "missing").state = mode == "chatgpt" ? .on : .off
         }
         menu.addItem(.separator())
         add("配置 API 地址 / key…", #selector(openConfigure), enabled: mode != "missing")
+        if mode == "api" && !busy {   // 手动改过配置文件、或想强制重来时用；表单保存后已自动做这一步
+            add("重新应用 API 配置并重启 Codex", #selector(switchToApi))
+        }
         add("刷新状态", #selector(refresh), enabled: !busy)
         add("打开备份文件夹", #selector(openBackups))
         let login = add("开机自动启动", #selector(toggleLogin))
