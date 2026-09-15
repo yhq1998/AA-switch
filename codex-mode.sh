@@ -4,12 +4,14 @@
 #   codex-mode api          切到自定义 API（退出 Codex → 改配置 → 统一会话 provider → 用 key 登录 → 重开）
 #   codex-mode chatgpt      切到 ChatGPT 账号（退出 Codex → 改配置 → 统一会话 provider → 重开，在应用里登录）
 #   codex-mode status       查看当前模式（不显示 key）
-#   codex-mode configure    设置或修改 API 地址、额外请求头和 key
+#   codex-mode configure    设置或修改 API 地址、额外请求头和 key（图形界面可用环境变量非交互传入，见下）
 #   codex-mode set-key      只更换 key（存入 macOS 钥匙串）
 #   codex-mode forget-key   从钥匙串删除本脚本保存的 key
 #   codex-mode fix-threads  只做「统一会话 provider」这一步，不改模式（会先退出 Codex）
 #   codex-mode mode         只输出一个词 api / chatgpt / none，供菜单栏小工具等程序读取
 #   codex-mode version      输出脚本版本号
+#   codex-mode config       输出已保存的地址和请求头（不含 key），供程序读取
+#   codex-mode has-key URL  钥匙串里有没有该地址的 key（退出码 0 表示有）
 #
 # 原理：Codex 把每条会话创建时用的 provider 名记在会话里，配置里必须有同名 provider 才能继续该会话。
 #   本脚本把 config.toml 的默认 provider 固定为一个名字，两种模式都不改这一行，只改 provider 块里的
@@ -24,8 +26,10 @@
 # 环境变量：CODEX_HOME（数据目录）、CODEX_APP_NAME（应用名，默认自动找 ChatGPT / Codex）、CODEX_BIN（CLI 路径）、
 #   CODEX_MODE_NO_REOPEN=1（切换后不重开应用）、CODEX_MODE_NONINTERACTIVE=1（需要输入时直接报错，供图形界面调用）、
 #   CODEX_MODE_FORCE=1（不退出应用、不检查进程，仅测试用）。
+#   非交互配置：CODEX_MODE_BASE_URL、CODEX_MODE_HEADERS（名称=值，逗号分隔）、CODEX_MODE_KEY_STDIN=1（从标准输入读 key，
+#   可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。
 set -eu
-CODEX_MODE_VERSION="2.0.0"
+CODEX_MODE_VERSION="2.1.0"
 
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CFG="$CODEX_HOME/config.toml"
@@ -49,7 +53,7 @@ fi
 
 say() { echo "$*" >&2; }
 die() { echo "错误：$*" >&2; exit 1; }
-usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 # ---------- 配置文件 ~/.codex/codex-mode.conf（key=value，不会被 source 执行） ----------
 conf_get() { if [ -f "$CONF" ]; then sed -n "s/^$1=//p" "$CONF" | head -n1; fi; }
@@ -360,12 +364,19 @@ mode_chatgpt() {
 mode_fix() { need_codex; load_conf; quit_app; prepare_switch "$(current_mode)"; reopen_app; }
 mode_status() {
   load_conf
-  local p login n=0 db; p="$(preamble_provider)"
-  if [ -z "$p" ] || [ "$p" = openai ]; then echo "模式：尚未切换过（默认 provider 为 openai）"
-  elif [ -n "$(section_value "$p" base_url active)" ]; then echo "模式：API（$(section_value "$p" base_url active)）"
-  else echo "模式：ChatGPT 账号"; fi
-  echo "默认 provider：${p:-openai}"
-  echo "API 地址：${BASE_URL:-未配置（codex-mode configure）}"
+  local p login n=0 db active; p="$(preamble_provider)"
+  active="$(section_value "$p" base_url active)"
+  if [ -z "$p" ] || [ "$p" = openai ]; then
+    echo "模式：尚未切换过"
+    echo "API 地址：${BASE_URL:-未配置}"
+  elif [ -n "$active" ]; then
+    echo "模式：API"
+    echo "请求发往：${active}"
+    if [ -n "$BASE_URL" ] && [ "${BASE_URL%/}" != "${active%/}" ]; then echo "新地址尚未生效：${BASE_URL}（重新切换到 API 后生效）"; fi
+  else
+    echo "模式：ChatGPT 账号"
+    echo "API 地址（切换后使用）：${BASE_URL:-未配置}"
+  fi
   if [ -n "$CODEX" ]; then
     login="$(auth_mode)"; echo "登录：${login:-未登录}" | sed 's/api_key/API key/; s/chatgpt/ChatGPT 账号/'
   fi
@@ -382,20 +393,28 @@ mode_status() {
 do_configure() {
   load_conf
   local url hdr key
-  url="$(ask '请输入 API Base URL（服务商给的完整地址，例如 https://api.example.com/v1）' "$BASE_URL")" || exit 1
-  url="${url%/}"; valid_url "$url" || die "地址格式不对：$url"
-  hdr="$(ask '额外请求头（格式 名称=值，多个用英文逗号分隔；通常留空，输入 - 表示清空）' "$(toml_to_pairs "$HEADERS")")" || exit 1
-  [ "$hdr" = - ] && hdr=""
+  if [ -n "${CODEX_MODE_BASE_URL:-}${CODEX_MODE_HEADERS:-}${CODEX_MODE_KEY_STDIN:-}" ]; then  # 非交互（图形界面）
+    url="${CODEX_MODE_BASE_URL:-$BASE_URL}"; hdr="${CODEX_MODE_HEADERS-$(toml_to_pairs "$HEADERS")}"
+    key=""; if [ "${CODEX_MODE_KEY_STDIN:-}" = 1 ]; then IFS= read -r key || true; fi
+  else
+    url="$(ask '请输入 API Base URL（服务商给的完整地址，例如 https://api.example.com/v1）' "$BASE_URL")" || exit 1
+    hdr="$(ask '额外请求头（格式 名称=值，多个用英文逗号分隔；通常留空，输入 - 表示清空）' "$(toml_to_pairs "$HEADERS")")" || exit 1
+    [ "$hdr" = - ] && hdr=""
+  fi
+  url="${url%/}"; valid_url "$url" || die "地址格式不对：${url}（需要以 http:// 或 https:// 开头的完整地址）"
   HEADERS="$(pairs_to_toml "$hdr")"; BASE_URL="$url"
   conf_set base_url "$BASE_URL"; conf_set headers "$HEADERS"
   say "已保存到 ${CONF}。"
-  if [ -n "$(kc_get "$(kc_service "$BASE_URL")")" ]; then
-    key="$(ask_secret "API key（钥匙串里已有一个，回车沿用）")" || exit 1
-  else
-    key="$(ask_secret "API key（回车跳过，切 API 模式时再输）")" || exit 1
+  if [ -z "${CODEX_MODE_BASE_URL:-}${CODEX_MODE_HEADERS:-}${CODEX_MODE_KEY_STDIN:-}" ]; then
+    if [ -n "$(kc_get "$(kc_service "$BASE_URL")")" ]; then
+      key="$(ask_secret "API key（钥匙串里已有一个，回车沿用）")" || exit 1
+    else
+      key="$(ask_secret "API key（回车跳过，切 API 模式时再输）")" || exit 1
+    fi
   fi
   if [ -n "$key" ]; then kc_set "$(kc_service "$BASE_URL")" "$key"; say "key 已存入钥匙串。"; fi
 }
+show_config() { load_conf >/dev/null 2>&1; echo "base_url=$BASE_URL"; echo "headers=$(toml_to_pairs "$HEADERS")"; }
 set_key() {
   load_conf; [ -n "$BASE_URL" ] || die "请先运行 codex-mode configure。"
   local key; key="$(ask_secret "请输入 $(url_host "$BASE_URL") 的 API key")" || exit 1
@@ -407,7 +426,7 @@ forget_key() {
   if kc_del "$(kc_service "$BASE_URL")"; then say "已从钥匙串删除。"; else say "钥匙串里没有保存的 key。"; fi
 }
 
-[ $# -eq 1 ] || usage
+[ $# -ge 1 ] && [ $# -le 2 ] || usage
 mkdir -p "$CODEX_HOME"
 case "$1" in
   api) mode_api ;;
@@ -419,5 +438,7 @@ case "$1" in
   fix-threads) mode_fix ;;
   mode) mode_word ;;
   version) echo "$CODEX_MODE_VERSION" ;;
+  config) show_config ;;
+  has-key) [ -n "${2:-}" ] && valid_url "$2" || die "用法：codex-mode has-key URL"; [ -n "$(kc_get "$(kc_service "$2")")" ] ;;
   *) usage ;;
 esac

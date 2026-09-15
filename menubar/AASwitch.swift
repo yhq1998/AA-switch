@@ -99,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: 调用脚本
     private struct Result { let code: Int32; let out: String; let err: String }
     private final class DataBox { var data = Data() }
-    private func run(_ args: [String]) -> Result {
+    private func run(_ args: [String], extraEnv: [String: String] = [:], input: String? = nil) -> Result {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [scriptPath] + args
@@ -108,15 +108,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         env["CODEX_MODE_NONINTERACTIVE"] = "1"
         if env["LANG"] == nil { env["LANG"] = "en_US.UTF-8" }
         env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        for (k, v) in extraEnv { env[k] = v }
         process.environment = env
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
+        let stdin = Pipe()
+        process.standardInput = stdin
         let started = Date()
         do { try process.run() } catch {
             log("无法启动脚本 \(args)：\(error.localizedDescription)")
             return Result(code: -1, out: "", err: "无法启动脚本：\(error.localizedDescription)")
         }
+        if let input = input { stdin.fileHandleForWriting.write(Data(input.utf8)) }
+        stdin.fileHandleForWriting.closeFile()
         let box = DataBox()
         let group = DispatchGroup()
         group.enter()
@@ -188,8 +193,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if alert.runModal() == .alertSecondButtonReturn { openTerminal(command: retry) }
     }
 
-    // MARK: 需要输入的操作交给终端（生成 .command 文件让 Terminal 执行，不需要自动化权限）
-    @objc private func openConfigure() { openTerminal(command: "configure") }
+    // MARK: 配置表单（原生弹窗），保存后在 API 模式下立即重新切换让新地址生效
+    @objc private func openConfigure() {
+        var baseURL = "", headers = ""
+        for line in run(["config"]).out.split(separator: "\n") {
+            if line.hasPrefix("base_url=") { baseURL = String(line.dropFirst(9)) }
+            else if line.hasPrefix("headers=") { headers = String(line.dropFirst(8)) }
+        }
+        showConfigureForm(baseURL: baseURL, headers: headers, error: nil)
+    }
+    private func showConfigureForm(baseURL: String, headers: String, error: String?) {
+        let alert = NSAlert()
+        alert.messageText = "配置 API"
+        alert.informativeText = error ?? "填写你的 API 服务地址和 key。key 只保存在 macOS 钥匙串里。"
+        if error != nil { alert.alertStyle = .warning }
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 118))
+        func row(_ title: String, _ field: NSTextField, y: CGFloat) {
+            let label = NSTextField(labelWithString: title)
+            label.frame = NSRect(x: 0, y: y + 2, width: 96, height: 20); label.alignment = .right
+            field.frame = NSRect(x: 104, y: y, width: 336, height: 24)
+            view.addSubview(label); view.addSubview(field)
+        }
+        let urlField = NSTextField(); urlField.stringValue = baseURL; urlField.placeholderString = "https://api.example.com/v1"
+        let headerField = NSTextField(); headerField.stringValue = headers; headerField.placeholderString = "名称=值，多个用逗号分隔；通常留空"
+        let keyField = NSSecureTextField()
+        let hasKey = !baseURL.isEmpty && run(["has-key", baseURL]).code == 0
+        keyField.placeholderString = hasKey ? "留空则沿用已保存的 key" : "sk-…"
+        row("API 地址", urlField, y: 88); row("额外请求头", headerField, y: 48); row("API key", keyField, y: 8)
+        urlField.nextKeyView = headerField; headerField.nextKeyView = keyField; keyField.nextKeyView = urlField
+        alert.accessoryView = view
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        alert.window.initialFirstResponder = urlField
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let url = urlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hdr = headerField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = keyField.stringValue
+        if url.isEmpty { showConfigureForm(baseURL: url, headers: hdr, error: "请填写 API 地址。"); return }
+        if key.isEmpty && run(["has-key", url]).code != 0 {
+            showConfigureForm(baseURL: url, headers: hdr, error: "这个地址还没有保存过 key，请填写 API key。"); return
+        }
+        let result = run(["configure"], extraEnv: ["CODEX_MODE_BASE_URL": url, "CODEX_MODE_HEADERS": hdr, "CODEX_MODE_KEY_STDIN": "1"],
+                         input: key + "\n")
+        if result.code != 0 { showConfigureForm(baseURL: url, headers: hdr, error: result.err.replacingOccurrences(of: "错误：", with: "")); return }
+        log("配置已保存：\(url)")
+        if mode == "api" {
+            doSwitch("api")   // 当前就在 API 模式：立即重新切换，让新地址 / 新 key 生效
+        } else {
+            refresh()
+            let done = NSAlert()
+            done.messageText = "已保存"
+            done.informativeText = "当前是 ChatGPT 账号模式，新地址会在下次切换到 API 时使用。"
+            done.addButton(withTitle: "好")
+            done.runModal()
+        }
+    }
     private func openTerminal(command: String) {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(appName)
