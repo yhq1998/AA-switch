@@ -10,6 +10,8 @@
 </p>
 
 <p align="center">
+  <a href="https://aaswitch.omniapexroute.com"><strong>aaswitch.omniapexroute.com</strong></a>
+  &nbsp;·&nbsp;
   <a href="README.md">English</a>
 </p>
 
@@ -26,7 +28,7 @@ AA Switch 住在 Mac 的菜单栏里，一眼就能看到 Codex 现在走的是�
 
 ## 安装
 
-1. 从 [Releases](https://github.com/yhq1998/AA-switch/releases) 页面下载 **AA Switch.dmg**。
+1. 到官网 [aaswitch.omniapexroute.com](https://aaswitch.omniapexroute.com) 下载 **AA Switch.dmg**（国内直连；也可从 [Releases](https://github.com/yhq1998/AA-switch/releases) 下载）。
 2. 把 **AA Switch** 拖进“应用程序”文件夹，打开它。
 3. 屏幕右上角会出现一个小开关。
 

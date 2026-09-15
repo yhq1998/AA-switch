@@ -10,6 +10,8 @@
 </p>
 
 <p align="center">
+  <a href="https://aaswitch.omniapexroute.com"><strong>aaswitch.omniapexroute.com</strong></a>
+  &nbsp;·&nbsp;
   <a href="README.zh-CN.md">中文</a>
 </p>
 
@@ -26,7 +28,7 @@ AA Switch lives in your Mac's menu bar and shows which side Codex is on right no
 
 ## Install
 
-1. Download **AA Switch.dmg** from the [Releases](https://github.com/yhq1998/AA-switch/releases) page.
+1. Download **AA Switch.dmg** from [aaswitch.omniapexroute.com](https://aaswitch.omniapexroute.com) (or from the [Releases](https://github.com/yhq1998/AA-switch/releases) page).
 2. Drag **AA Switch** into your Applications folder and open it.
 3. Look for the little switch at the top right of your screen.
 
