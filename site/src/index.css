@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  font-family: 'Almarai', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC',
+    'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: #000000;
+  color: #e1e0cc;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 英雄区视频上的颗粒感 */
+.noise-overlay {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Features 区的细微底纹 */
+.bg-noise {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* 品牌色渐变底：图标里的粉、紫、薄荷在黑底上缓慢流动 */
+.brand-backdrop {
+  background:
+    radial-gradient(60% 80% at 20% 30%, rgba(247, 183, 204, 0.55), transparent 70%),
+    radial-gradient(50% 70% at 80% 20%, rgba(201, 182, 240, 0.5), transparent 70%),
+    radial-gradient(70% 60% at 60% 90%, rgba(142, 214, 194, 0.45), transparent 70%),
+    #0a0a0c;
+  background-size: 160% 160%;
+  animation: brand-drift 24s ease-in-out infinite alternate;
+  filter: saturate(0.9);
+}
+@keyframes brand-drift {
+  from { background-position: 0% 0%; }
+  to { background-position: 100% 100%; }
+}

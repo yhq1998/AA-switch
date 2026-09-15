@@ -21,6 +21,19 @@ curl -fsSL https://你的托管目录/setup.sh | bash
 
 菜单栏工具的日志在 `~/.codex/codex-mode-menubar.log`。
 
+## 官网（site/）
+
+React + Vite + TypeScript + Tailwind，动效用 framer-motion，图标用 lucide-react。
+
+```bash
+cd site
+npm install
+npm run dev      # 本地预览
+npm run build    # 产物在 site/dist/，纯静态，可部署到任何静态托管（Vercel、Cloudflare Pages、GitHub Pages）
+```
+
+文案在 `site/src/sections/` 三个文件里；英雄区和功能区的视频地址在各自文件顶部的常量里，换成自己的即可。
+
 ## 发布
 
 ### 一次性准备（需要 Apple 开发者账号，只做一次）
