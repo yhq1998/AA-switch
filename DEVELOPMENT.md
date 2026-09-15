@@ -23,16 +23,71 @@ curl -fsSL https://你的托管目录/setup.sh | bash
 
 ## 官网（site/）
 
-React + Vite + TypeScript + Tailwind，动效用 framer-motion，图标用 lucide-react。
+React + Vite + TypeScript + Tailwind，动效用 framer-motion，图标用 lucide-react。构建产物是纯静态文件。
 
 ```bash
 cd site
 npm install
 npm run dev      # 本地预览
-npm run build    # 产物在 site/dist/，纯静态，可部署到任何静态托管（Vercel、Cloudflare Pages、GitHub Pages）
+npm run build    # 产物在 site/dist/
 ```
 
-文案在 `site/src/sections/` 三个文件里；英雄区和功能区的视频地址在各自文件顶部的常量里，换成自己的即可。
+文案在 `site/src/sections/` 三个文件里；英雄区和功能区的视频地址在各自文件顶部的常量里。
+“下载 macOS 版”按钮的地址由环境变量 `VITE_DOWNLOAD_URL` 决定（见 `site/.env.example`），不设则指向 GitHub Releases。
+
+### 部署到自己的服务器
+
+国内同事访问 GitHub 不稳定，建议官网和 dmg 都放自己的服务器。任何能跑 Caddy 或 Nginx 的 Linux 机器都行；
+**大陆机器需要域名备案**，香港、新加坡等不用。
+
+1. **DNS**：加一条 A 记录，例如 `aaswitch.example.com → 服务器 IP`。
+2. **服务器装 Caddy**（自动申请 HTTPS 证书）：
+
+   ```bash
+   sudo apt install -y caddy          # Debian / Ubuntu；其他系统见 caddyserver.com/docs/install
+   sudo mkdir -p /var/www/aaswitch
+   ```
+
+3. **Caddyfile**（`/etc/caddy/Caddyfile`）：
+
+   ```caddyfile
+   aaswitch.example.com {
+       root * /var/www/aaswitch
+       encode gzip zstd
+       try_files {path} /index.html
+       file_server
+       header /assets/* Cache-Control "public, max-age=31536000, immutable"
+       header /download/* Content-Disposition attachment
+   }
+   ```
+
+   然后 `sudo systemctl reload caddy`。
+
+4. **本机一条命令构建并上传**（会顺带把 `menubar/dist/AA Switch.dmg` 传到 `/download/AA-Switch.dmg`）：
+
+   ```bash
+   cd site
+   VITE_DOWNLOAD_URL=https://aaswitch.example.com/download/AA-Switch.dmg \
+   DEPLOY_TARGET=root@服务器IP:/var/www/aaswitch \
+   ./deploy.sh
+   ```
+
+   以后改官网或出新 dmg，重复这一条即可。
+
+用 Nginx 的话，站点配置等价于：
+
+```nginx
+server {
+    listen 80;
+    server_name aaswitch.example.com;
+    root /var/www/aaswitch;
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { add_header Cache-Control "public, max-age=31536000, immutable"; }
+    location /download/ { add_header Content-Disposition attachment; }
+}
+```
+
+再用 certbot 加 HTTPS：`sudo certbot --nginx -d aaswitch.example.com`。
 
 ## 发布
 

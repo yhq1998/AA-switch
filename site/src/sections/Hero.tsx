@@ -4,7 +4,7 @@ import WordsPullUp from '../components/WordsPullUp'
 
 const HERO_VIDEO =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260405_170732_8a9ccda6-5cff-4628-b164-059c500a2b41.mp4'
-const DOWNLOAD_URL = 'https://github.com/yhq1998/AA-switch/releases/latest'
+const DOWNLOAD_URL = import.meta.env.VITE_DOWNLOAD_URL || 'https://github.com/yhq1998/AA-switch/releases/latest'
 const NAV = [
   { label: '初衷', href: '#about' },
   { label: '功能', href: '#features' },
