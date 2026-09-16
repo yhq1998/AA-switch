@@ -1,5 +1,5 @@
 #!/bin/bash
-# 构建 AA Switch：编译通用二进制、打包 .app（自带 codex-mode.sh 和默认配置）、签名、打 dmg、公证。
+# 构建 AA Switch：编译通用二进制、打包 .app（自带 codex-mode.sh、claude-mode.sh 和默认配置）、签名、打 dmg、公证。
 # 只需要 Xcode Command Line Tools；同事的机器不需要任何开发工具。
 #
 #   开发 / 内部测试（ad-hoc 签名，产出 dist/AASwitch.app.tar.gz 供 setup.sh 用）：
@@ -14,6 +14,7 @@
 #   SIGN_IDENTITY 签名身份；不设或 "-" 为 ad-hoc
 #   NOTARY_PROFILE  xcrun notarytool store-credentials 保存的凭据名；设了才公证
 #   DEFAULT_BASE_URL / DEFAULT_HEADERS / DEFAULT_LEGACY_KEYCHAIN_SERVICE  打进包里的默认配置（同 setup.sh）
+#   UPDATE_URL    官网上 latest.json 的地址（site/deploy.sh 会生成它）；设了 App 会每天检查一次，有新版本就在菜单里提示
 set -eu
 cd "$(dirname "$0")"
 command -v swiftc >/dev/null || { echo "需要 swiftc：xcode-select --install" >&2; exit 1; }
@@ -26,6 +27,7 @@ VERSION="${VERSION:-${SCRIPT_VERSION:-1.0.0}}"
 BUILD="$(date +%Y%m%d%H%M)"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 COPYRIGHT="${COPYRIGHT:-© $(date +%Y)}"
+UPDATE_URL="${UPDATE_URL:-}"
 
 OUT=dist; APP="$OUT/$APP_NAME.app"; RES="$APP/Contents/Resources"
 rm -rf "$OUT"; mkdir -p "$APP/Contents/MacOS" "$RES"
@@ -44,16 +46,17 @@ rm -f "$OUT/$EXEC_NAME-arm64" "$OUT/$EXEC_NAME-x86_64"
 
 echo "· 打包资源"
 [ -f icon/AppIcon.icns ] && [ icon/AppIcon.icns -nt icon/aa-switch.svg ] || icon/make-icns.sh >/dev/null
-[ -f icon/menubar/menubar-api.png ] && [ icon/menubar/menubar-api.png -nt icon/make-menubar.sh ] || icon/make-menubar.sh >/dev/null
+[ -f icon/menubar/menubar.png ] && [ icon/menubar/menubar.png -nt icon/make-menubar.sh ] || icon/make-menubar.sh >/dev/null
 cp icon/AppIcon.icns "$RES/AppIcon.icns"
-cp icon/menubar/menubar-*.png "$RES/"
+cp icon/menubar/menubar.png icon/menubar/product-*.png "$RES/"
 cp ../codex-mode.sh "$RES/codex-mode.sh"
+cp ../claude-mode.sh "$RES/claude-mode.sh"
 : > "$RES/defaults.conf"
 [ -n "${DEFAULT_BASE_URL:-}" ] && echo "base_url=${DEFAULT_BASE_URL%/}" >> "$RES/defaults.conf"
 [ -n "${DEFAULT_HEADERS:-}" ] && echo "headers=$DEFAULT_HEADERS" >> "$RES/defaults.conf"
 [ -n "${DEFAULT_LEGACY_KEYCHAIN_SERVICE:-}" ] && echo "legacy_keychain_service=$DEFAULT_LEGACY_KEYCHAIN_SERVICE" >> "$RES/defaults.conf"
 sed -e "s|@APP_NAME@|$APP_NAME|g" -e "s|@EXEC_NAME@|$EXEC_NAME|g" -e "s|@BUNDLE_ID@|$BUNDLE_ID|g" \
-    -e "s|@VERSION@|$VERSION|g" -e "s|@BUILD@|$BUILD|g" -e "s|@COPYRIGHT@|$COPYRIGHT|g" Info.plist.in > "$APP/Contents/Info.plist"
+    -e "s|@VERSION@|$VERSION|g" -e "s|@BUILD@|$BUILD|g" -e "s|@COPYRIGHT@|$COPYRIGHT|g" -e "s|@UPDATE_URL@|$UPDATE_URL|g" Info.plist.in > "$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 
 if [ "$SIGN_IDENTITY" = "-" ]; then

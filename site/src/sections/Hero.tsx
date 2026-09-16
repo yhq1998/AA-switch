@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowRight } from 'lucide-react'
 import WordsPullUp from '../components/WordsPullUp'
@@ -5,6 +6,8 @@ import WordsPullUp from '../components/WordsPullUp'
 const HERO_VIDEO =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260405_170732_8a9ccda6-5cff-4628-b164-059c500a2b41.mp4'
 const DOWNLOAD_URL = import.meta.env.VITE_DOWNLOAD_URL || 'https://github.com/yhq1998/AA-switch/releases/latest'
+// 自己托管 dmg 时，同目录的 latest.json（deploy.sh 生成）记录当前版本，显示在下载按钮下面
+const LATEST_URL = import.meta.env.VITE_DOWNLOAD_URL ? DOWNLOAD_URL.replace(/[^/]*$/, 'latest.json') : ''
 const NAV = [
   { label: '初衷', href: '#about' },
   { label: '功能', href: '#features' },
@@ -16,6 +19,14 @@ const ease = [0.16, 1, 0.3, 1] as const
 const linkStyle = { color: 'rgba(225, 224, 204, 0.8)' }
 
 export default function Hero() {
+  const [latest, setLatest] = useState<{ version: string; date?: string } | null>(null)
+  useEffect(() => {
+    if (!LATEST_URL) return
+    fetch(LATEST_URL, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j && typeof j.version === 'string' && setLatest(j))
+      .catch(() => {})
+  }, [])
   return (
     <section className="h-screen bg-black p-4 md:p-6">
       <div className="relative h-full w-full overflow-hidden rounded-2xl md:rounded-[2rem]">
@@ -85,6 +96,17 @@ export default function Hero() {
                   <ArrowRight className="h-4 w-4 text-primary" />
                 </span>
               </motion.a>
+              {latest && (
+                <motion.p
+                  className="text-xs text-primary/50"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.6, delay: 0.9 }}
+                >
+                  当前版本 v{latest.version}
+                  {latest.date ? ` · ${latest.date} 更新` : ''} · 已装的用户会在菜单里收到更新提示
+                </motion.p>
+              )}
             </div>
           </div>
         </div>

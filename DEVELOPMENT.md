@@ -4,13 +4,18 @@
 
 ## 命令行
 
-菜单栏 App 只是壳，真正干活的是 `~/.codex/codex-mode`（App 启动时自动安装）。也可以直接在终端用：
+菜单栏 App 只是壳，真正干活的是两个脚本（App 启动时自动安装）：`~/.codex/codex-mode` 管 Codex，`~/.claude/claude-mode` 管 Claude Code。也可以直接在终端用：
 
 ```bash
 ~/.codex/codex-mode api          # 切到 API；首次会要一次 key，可存进钥匙串
 ~/.codex/codex-mode chatgpt      # 切回 ChatGPT 账号；有存档的登录态会自动恢复
 ~/.codex/codex-mode status       # 看当前模式，不显示 key
 ~/.codex/codex-mode configure    # 修改 API 地址、额外请求头或 key
+
+~/.claude/claude-mode api        # Claude Code 切到 API：写 ~/.claude/settings.json 的 env 块，新会话立即生效
+~/.claude/claude-mode account    # 切回 Claude 账号：删掉 env 块里的那几项，账号登录态一直都在
+~/.claude/claude-mode status
+~/.claude/claude-mode configure  # 地址填网关根地址（不带 /v1）；首次运行会沿用 codex-mode 的地址去掉 /v1
 ```
 
 没有签名包时也可以用一行命令安装（curl 下载的文件不带隔离标记，Gatekeeper 不拦）：
@@ -111,10 +116,13 @@ DEFAULT_HEADERS='{ "x-my-header" = "value" }' \
 DEFAULT_LEGACY_KEYCHAIN_SERVICE=旧版脚本的钥匙串服务名 \
 SIGN_IDENTITY="Developer ID Application: 公司名 (TEAMID)" \
 NOTARY_PROFILE=aaswitch \
+UPDATE_URL=https://aaswitch.example.com/download/latest.json \
 ./build.sh
 ```
 
-产出 `menubar/dist/AA Switch.dmg`（已签名、已公证、已装订）和 `AASwitch.app.tar.gz`。把 dmg 放到任何能下载的地方发给同事即可。三个 `DEFAULT_*` 都可不填，不填时首次切换会从已有 `config.toml` 推断地址，推断不到就交互询问。
+产出 `menubar/dist/AA Switch.dmg`（已签名、已公证、已装订）和 `AASwitch.app.tar.gz`。
+
+**版本号与更新提示。** dmg 的文件名固定是 `AA-Switch.dmg`（setup.sh 和官网都指向它），版本号不放文件名里，而是：`site/deploy.sh` 上传时顺带生成 `download/latest.json`（版本、日期、地址、sha256）；官网在下载按钮下显示"当前版本 vX.Y.Z"；App 构建时通过 `UPDATE_URL` 记住这个地址，启动时和之后每 6 小时读一次，发现比自己新就在菜单底部显示"有新版本 X.Y.Z，点击下载…"。App 的版本号默认取 `codex-mode.sh` 的 `CODEX_MODE_VERSION`，可用 `VERSION=` 覆盖；GitHub Release 的 tag 用同一个版本号。把 dmg 放到任何能下载的地方发给同事即可。三个 `DEFAULT_*` 都可不填，不填时首次切换会从已有 `config.toml` 推断地址，推断不到就交互询问。
 
 不设 `SIGN_IDENTITY` 时是 ad-hoc 签名，只能通过方式二的 curl 命令分发（curl 下载的文件不带隔离标记，Gatekeeper 不拦；浏览器或聊天软件下载的会被拦）。
 
@@ -137,6 +145,22 @@ NOTARY_PROFILE=aaswitch \
 - 写入前把 `config.toml`、`auth.json`、要改的会话文件和数据库快照复制到 `~/.codex/codex-mode-backups/<时间>/`；写完让 Codex 读一遍新配置（`codex login status`，它会完整加载配置且不联网，比 `codex doctor` 快几秒），读不通或登录失败就整体恢复。
 - 切换前若处于 ChatGPT 登录态，把 `auth.json` 存一份到 `~/.codex/codex-mode-auth/chatgpt.json`；切回账号模式时直接恢复，不用重新登录。token 过期时 Codex 会自己提示登录。
 
+### Claude Code（claude-mode.sh）
+
+- Claude Code 的凭据优先级里，环境变量 `ANTHROPIC_AUTH_TOKEN` 排在账号登录之前，且 `~/.claude/settings.json` 的 `env` 块对终端和 IDE 里的每个新会话生效。所以切 API 只是往 `env` 块写 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`（有额外请求头再写 `ANTHROPIC_CUSTOM_HEADERS`），切回账号只是删掉它们。用 `ANTHROPIC_AUTH_TOKEN` 而不是 `ANTHROPIC_API_KEY`，后者首次使用会弹确认。
+- **Claude 桌面应用的 Code 标签不看 settings.json。** 桌面应用启动 Code 会话时设置 `CLAUDE_CODE_ENTRYPOINT=claude-desktop` 并注入 `CLAUDE_CODE_OAUTH_TOKEN`、`ANTHROPIC_BASE_URL`；在这种入口下引擎强制使用注入的 OAuth token，`settings.json` 里的 `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` / `apiKeyHelper`、乃至进程环境里的 `ANTHROPIC_AUTH_TOKEN` 全部被忽略（调试日志里的原话：`keeping the user-supplied CLAUDE_CODE_OAUTH_TOKEN instead of adopting the stored credential`）。
+- **让桌面应用走网关只能整个应用切到第三方推理模式**（官方文档 <https://claude.com/docs/third-party/claude-desktop>），`claude-mode desktop gateway|account` 做的就是这件事，菜单里 Claude Code 那行的开关会和命令行一起切：
+  - 网关配置写在 `~/Library/Application Support/Claude-3p/configLibrary/<id>.json`（`inferenceProvider: gateway`、`inferenceGatewayBaseUrl`、`inferenceGatewayApiKey`、`inferenceGatewayAuthScheme: bearer`、`inferenceModels`），`_meta.json` 的 `appliedId` 指向当前用的那份；这和应用里 Developer > Configure Third-Party Inference 写的是同一处。
+  - 账号 / 网关的选择写在 `~/Library/Application Support/Claude-3p/claude_desktop_config.json` 的 `deploymentMode`（注意在 `-3p` 目录，应用代码里取路径的函数固定加 `-3p` 后缀，主目录那份不读）（`1p` 账号、`3p` 网关），启动时生效，所以切换要退出重开应用（应用没在运行就只改文件）。
+  - 网关模式用独立的数据目录 `Claude-3p`，账号登录态留在主目录，两边互不影响，切换不用重新登录。Claude Code 引擎的会话记录仍在 `~/.claude/projects/`，终端里 `--resume` 不受影响。
+  - 桌面应用侧边栏的会话列表按数据目录各存一份：`<数据目录>/claude-code-sessions/<账号 uuid>/<组织 uuid>/local_<id>.json`，每个文件记着 `cliSessionId`（对应 `~/.claude/projects` 里的记录）、目录、标题、模型、权限模式；`deleted_<id>` 是删除标记。账号模式的账号 / 组织 uuid 取自 `~/.claude.json` 的 `oauthAccount`，网关模式是一个固定的本地账号（组织 `00000000-0000-4000-8000-000000000001`）。`claude-mode desktop gateway|account|sync` 会把两边互相补齐（只补缺的，不覆盖，尊重删除标记），并把 `preferences.localAgentModeTrustedFolders` 取并集，这和应用自己 Help > Troubleshooting 里的 "Import Claude Code CLI Sessions…" 效果相同。第一次进入网关模式时 `Claude-3p` 里还没有会话目录，要等应用初始化一次后再切一次（或跑 `desktop sync`）才会补齐。
+  - 桌面应用启动时会做一次健康检查，日志（`~/Library/Logs/Claude-3p/main.log`）里 `ConfigHealth` 为 `config_model_rejected` 表示网关对模型请求回了 404（多半是地址多带了 `/v1`，见下一条；也可能真是模型名不对），`auth_failed` / `unreachable` 分别对应 key 和地址问题。
+  - 桌面地址默认和 `base_url` 一样，**不带 `/v1`**：官方文档的示例带 `/v1`，但桌面应用把地址原样交给内置的 Claude Code 引擎，引擎自己再加 `/v1/messages`，带了就变成 `/v1/v1/messages`，网关回 404，应用把它报成"模型不存在"（日志里 `Gateway rejected model … (HTTP 404)`、健康检查 `config_model_rejected`）。模型列表默认 `claude-fable-5-1,claude-fable-5,claude-opus-5`，第一个是默认模型；`claude-mode.conf` 里的 `desktop_base_url`、`desktop_models` 可改。
+- 会话是本地 jsonl 文件，与后端无关；账号登录态在钥匙串里，脚本不碰。所以不用退出重开、不用备份登录态、不用修会话。
+- JSON 用系统自带的 `osascript -l JavaScript` 读写，其他键原样保留，写前备份到 `~/.claude/claude-mode-backups/<时间>/`。
+- 地址是网关根地址（Claude Code 自己加 `/v1/messages`），与 Codex 的 `/v1` 风格不同；key 的钥匙串条目按域名命名（`codex-mode:<域名>`），两个脚本共用。
+- 终端、IDE 插件、桌面版 Code 标签用的是同一个引擎和同一个 `~/.claude`，会话文件互通；前两者跟着 settings.json 切，桌面版跟着 deploymentMode 切。
+
 ## 文件
 
 | 路径 | 用途 |
@@ -148,6 +172,9 @@ NOTARY_PROFILE=aaswitch \
 | `~/.codex/codex-mode-auth/chatgpt.json` | 上次的 ChatGPT 登录态，切回账号模式时恢复 |
 | `~/.codex/codex-mode-backups/` | 每次切换的备份（config.toml、auth.json、被改的会话、数据库快照）、旧版脚本 |
 | `~/.codex/codex-mode-menubar.log` | 菜单栏工具的日志 |
+| `~/.claude/claude-mode` | Claude Code 的切换脚本（由 App 安装，或 setup.sh 安装） |
+| `~/.claude/claude-mode.conf` | Claude Code 用的网关地址、请求头（不含 key） |
+| `~/.claude/claude-mode-backups/` | 每次改 settings.json 前的备份、旧版脚本 |
 | `~/Library/LaunchAgents/<BUNDLE_ID>.plist` | 开机自启（在菜单里勾选后生成） |
 
 ## 环境变量（脚本）

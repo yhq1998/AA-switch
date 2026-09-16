@@ -29,6 +29,8 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>@COPYRIGHT@</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>切换模式时需要退出并重新打开 Codex 应用。</string>
+	<string>切换模式时需要退出并重新打开 Codex 或 Claude 桌面应用。</string>
+	<key>AAUpdateURL</key>
+	<string>@UPDATE_URL@</string>
 </dict>
 </plist>

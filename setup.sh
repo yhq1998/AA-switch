@@ -1,5 +1,6 @@
 #!/bin/bash
-# setup.sh — 把 codex-mode 安装到 ~/.codex/codex-mode
+# setup.sh — 把 codex-mode 安装到 ~/.codex/codex-mode；同目录（或托管目录）里有 claude-mode.sh 时，
+#            一并安装到 ~/.claude/claude-mode（Claude Code 的切换脚本）
 #
 #   本地安装：bash setup.sh                                （同目录下要有 codex-mode.sh）
 #   远程安装：curl -fsSL https://你的托管目录/setup.sh | bash
@@ -57,6 +58,31 @@ if [ ! -f "$CONF" ]; then
   if [ -s "$CONF" ]; then echo "已写入默认 API 配置 $CONF"; else rm -f "$CONF"; fi
 fi
 
+# ---------- Claude Code 的切换脚本（可选：有 claude-mode.sh 就装） ----------
+CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+CLAUDE_TARGET="$CLAUDE_HOME/claude-mode"
+CLAUDE_MSG=""
+CTMP="$(mktemp "$CODEX_HOME/.claude-mode.XXXXXX")"
+if [ -n "$SRC_DIR" ] && [ -f "$SRC_DIR/claude-mode.sh" ]; then
+  cp "$SRC_DIR/claude-mode.sh" "$CTMP"
+elif [ -n "$DOWNLOAD_URL" ] && curl -fsSL --connect-timeout 15 --max-time 60 "${DOWNLOAD_URL%/}/claude-mode.sh" -o "$CTMP" 2>/dev/null; then
+  :
+else
+  rm -f "$CTMP"; CTMP=""
+fi
+if [ -n "$CTMP" ] && head -n1 "$CTMP" | grep -q '^#!/bin/bash' && bash -n "$CTMP"; then
+  mkdir -p "$CLAUDE_HOME"
+  if [ -f "$CLAUDE_TARGET" ]; then
+    mkdir -p "$CLAUDE_HOME/claude-mode-backups"
+    cp "$CLAUDE_TARGET" "$CLAUDE_HOME/claude-mode-backups/claude-mode.old-$(date +%Y%m%d-%H%M%S)"
+  fi
+  chmod 755 "$CTMP"; mv "$CTMP" "$CLAUDE_TARGET"
+  echo "已安装 $CLAUDE_TARGET"
+  CLAUDE_MSG="Claude Code 也能切：$CLAUDE_TARGET api / account（改的是 ~/.claude/settings.json 的 env 块，不用重启）。"
+else
+  [ -n "$CTMP" ] && rm -f "$CTMP"
+fi
+
 # ---------- 菜单栏小工具（可选，装不上不影响命令行） ----------
 MENUBAR_MSG=""
 if [ "${CODEX_SETUP_NO_MENUBAR:-}" != 1 ]; then
@@ -93,5 +119,6 @@ cat <<MSG
   查看状态：         $TARGET status
   修改地址或 key：   $TARGET configure
 切换会退出并重开 Codex，历史会话在两种模式下都能继续；改动前会备份到 $CODEX_HOME/codex-mode-backups/。
+${CLAUDE_MSG}
 ${MENUBAR_MSG}
 MSG
