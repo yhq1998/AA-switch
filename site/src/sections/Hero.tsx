@@ -104,7 +104,7 @@ export default function Hero() {
                   transition={{ duration: 0.6, delay: 0.9 }}
                 >
                   当前版本 v{latest.version}
-                  {latest.date ? ` · ${latest.date} 更新` : ''} · 已装的用户会在菜单里收到更新提示
+                  {latest.date ? ` · ${latest.date} 更新` : ''} · Intel 和 Apple 芯片均支持 · 需要 macOS 13 或更新
                 </motion.p>
               )}
             </div>
