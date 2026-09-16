@@ -38,7 +38,7 @@
 #   非交互配置：CLAUDE_MODE_BASE_URL、CLAUDE_MODE_HEADERS（名称=值，逗号分隔）、CLAUDE_MODE_KEY_STDIN=1（从标准输入读
 #   key，可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。
 set -eu
-CLAUDE_MODE_VERSION="1.2.2"
+CLAUDE_MODE_VERSION="1.2.3"
 
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS="$CLAUDE_HOME/settings.json"
@@ -144,8 +144,9 @@ current_mode() { read_env; if [ -n "$(env_field "$ENVJSON" base_url)" ]; then ec
 prune_backups() {
   local root="${BK%/*}" n
   [ -d "$root" ] || return 0
-  n=0; ls -1d "$root"/[0-9]*-[0-9]* 2>/dev/null | sort -r | while IFS= read -r d; do n=$((n+1)); [ "$n" -gt 20 ] && rm -rf "$d"; done
-  n=0; ls -1 "$root"/*.old-* 2>/dev/null | sort -r | while IFS= read -r f; do n=$((n+1)); [ "$n" -gt 3 ] && rm -f "$f"; done
+  # 注意脚本开着 set -e：循环体最后一条不能是可能为假的 && 列表，否则整个管道返回 1 会让脚本静默退出
+  n=0; ls -1d "$root"/[0-9]*-[0-9]* 2>/dev/null | sort -r | while IFS= read -r d; do n=$((n+1)); if [ "$n" -gt 20 ]; then rm -rf "$d"; fi; done || true
+  n=0; ls -1 "$root"/*.old-* 2>/dev/null | sort -r | while IFS= read -r f; do n=$((n+1)); if [ "$n" -gt 3 ]; then rm -f "$f"; fi; done || true
   return 0
 }
 backup_settings() {

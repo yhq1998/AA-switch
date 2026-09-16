@@ -479,7 +479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.refresh()
                 if let (args, result) = failed {
                     let text = (result.err + "\n" + result.out).trimmingCharacters(in: .whitespacesAndNewlines)
-                    self.showError(title: "\(p.name) 切换失败（\(args.joined(separator: " "))）", text: text, retry: (p, args.joined(separator: " ")))
+                    self.showError(title: "\(p.name) 切换失败（\(args.joined(separator: " "))，退出码 \(result.code)）", text: text, retry: (p, args.joined(separator: " ")))
                 }
             }
         }
@@ -487,7 +487,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func showError(title: String, text: String, retry: (Product, String)) {
         let alert = NSAlert()
         alert.messageText = title
-        alert.informativeText = text.isEmpty ? "脚本没有输出。" : text
+        alert.informativeText = text.isEmpty ? "脚本没有输出。请点“导出诊断信息”，把桌面上生成的文件发给管理员。" : text
         alert.alertStyle = .warning
         alert.addButton(withTitle: "好")
         alert.addButton(withTitle: "在终端中运行")
