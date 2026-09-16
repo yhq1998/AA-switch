@@ -491,7 +491,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.informativeText = "下面是检测到的当前状态。请选择每个产品从哪种模式开始，点“应用”后才会真正切换；之后随时可以在菜单里切换。"
         let rowH: CGFloat = 66, width: CGFloat = 470
         let view = NSView(frame: NSRect(x: 0, y: 0, width: width, height: rowH * CGFloat(targets.count)))
-        var choice: [String: NSButton] = [:]   // 产品名 → “API”那个单选钮（选中 = API，否则账号）
+        var choice: [String: NSSegmentedControl] = [:]   // 产品名 → 分段控件（第 1 段 = API，第 0 段 = 账号）
         for (i, p) in targets.enumerated() {
             let y = rowH * CGFloat(targets.count - 1 - i)
             let box = NSView(frame: NSRect(x: 0, y: y, width: width, height: rowH))   // 每个产品一个容器，单选钮按容器分组
@@ -502,18 +502,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             detected.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
             detected.textColor = .secondaryLabelColor
             detected.frame = NSRect(x: 0, y: rowH - 40, width: width, height: 16)
-            let account = NSButton(radioButtonWithTitle: p.accountTitle, target: nil, action: nil)
-            let api = NSButton(radioButtonWithTitle: "API", target: nil, action: nil)
-            account.frame = NSRect(x: 0, y: rowH - 62, width: 150, height: 18)
-            api.frame = NSRect(x: 156, y: rowH - 62, width: 70, height: 18)
-            account.state = .on
+            let seg = NSSegmentedControl(labels: [p.accountTitle, "API"], trackingMode: .selectOne, target: nil, action: nil)
+            seg.selectedSegment = 0   // 默认账号
+            seg.sizeToFit()
+            seg.frame = NSRect(x: 0, y: rowH - 64, width: seg.frame.width, height: seg.frame.height)
             let note = NSTextField(labelWithString: p.resource == "codex-mode" ? "切换会退出并重新打开 ChatGPT" : (hasDesktop ? "切换会重启 Claude 桌面应用" : ""))
             note.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
             note.textColor = .tertiaryLabelColor
-            note.frame = NSRect(x: 232, y: rowH - 62, width: width - 232, height: 16)
-            for v in [title, detected, account, api, note] as [NSView] { box.addSubview(v) }
+            note.frame = NSRect(x: seg.frame.maxX + 12, y: rowH - 60, width: width - seg.frame.maxX - 12, height: 16)
+            for v in [title, detected, seg, note] as [NSView] { box.addSubview(v) }
             view.addSubview(box)
-            choice[p.name] = api
+            choice[p.name] = seg
         }
         alert.accessoryView = view
         alert.addButton(withTitle: "应用")
@@ -525,7 +524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 只对“选的和现状不一致”的产品执行切换；混合状态也算不一致，重新切一次把两个轴对齐
         var plan: [(Product, [[String]])] = []
         for p in targets {
-            let wantApi = choice[p.name]?.state == .on
+            let wantApi = choice[p.name]?.selectedSegment == 1
             let m = mode[p.name] ?? ""
             if p.resource == "codex-mode" {
                 let clean = wantApi ? (m == "api" && !isMixed(p)) : ((m == "chatgpt" || m == "none") && !isMixed(p))
