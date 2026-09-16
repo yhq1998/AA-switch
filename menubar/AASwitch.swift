@@ -447,16 +447,116 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 for (k, v) in lines { self.statusLines[k] = v }
                 for (k, v) in stillStale { self.staleSessions[k] = v }
                 self.render()
+                self.maybeShowOnboarding()
             }
         }
+    }
+
+    // MARK: 首次打开的引导：把检测到的状态摆出来，让用户选每个产品从哪种模式开始（默认账号），点“应用”才真正切换
+    private var onboardingShown = false
+    private func loginWord(_ p: Product) -> String {   // Codex 的“登录：…”那行（ChatGPT 账号 / API key / 未登录）
+        statusInfo(p).first { $0.key == "登录" }?.value ?? ""
+    }
+    // Codex 的两个轴不一致：配置指向网关但用 ChatGPT 登录，或反过来
+    private func isMixed(_ p: Product) -> Bool {
+        guard p.resource == "codex-mode", statusLines[p.name] != nil else { return false }
+        let m = mode[p.name] ?? "", login = loginWord(p)
+        return (m == "api" && !login.isEmpty && !login.hasPrefix("API key")) || (m == "chatgpt" && login.hasPrefix("API key"))
+    }
+    private func detectedText(_ p: Product) -> String {
+        let m = mode[p.name] ?? "unknown"
+        if p.resource == "codex-mode" {
+            let login = loginWord(p)
+            switch m {
+            case "none": return "尚未用 AA Switch 切换过，按 Codex 自己的设置运行" + (login.isEmpty ? "" : "，登录方式：\(login)")
+            case "api": return "请求发往 API 网关" + (login.isEmpty ? "" : "，登录方式：\(login)")
+            case "chatgpt": return "ChatGPT 账号模式" + (login.isEmpty ? "" : "，登录方式：\(login)")
+            default: return "状态未知"
+            }
+        }
+        switch m {
+        case "api": return "API 模式" + (hasDesktop ? (desktopMode == "gateway" ? "（桌面应用也走网关）" : "（桌面应用仍是账号）") : "")
+        case "account": return "账号模式" + (hasDesktop && desktopMode == "gateway" ? "（但桌面应用在网关模式）" : "")
+        default: return "状态未知"
+        }
+    }
+    private func maybeShowOnboarding() {
+        guard !onboardingShown, !UserDefaults.standard.bool(forKey: "onboardingDone"), !busy else { return }
+        let targets = products.filter { !["missing", "absent", "unknown"].contains(mode[$0.name] ?? "unknown") && statusLines[$0.name] != nil }
+        guard !targets.isEmpty else { return }
+        onboardingShown = true
+        log("首次打开，显示初始设置")
+        let alert = NSAlert()
+        alert.messageText = "欢迎使用 \(appName)"
+        alert.informativeText = "下面是检测到的当前状态。请选择每个产品从哪种模式开始，点“应用”后才会真正切换；之后随时可以在菜单里切换。"
+        let rowH: CGFloat = 66, width: CGFloat = 470
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: width, height: rowH * CGFloat(targets.count)))
+        var choice: [String: NSButton] = [:]   // 产品名 → “API”那个单选钮（选中 = API，否则账号）
+        for (i, p) in targets.enumerated() {
+            let y = rowH * CGFloat(targets.count - 1 - i)
+            let box = NSView(frame: NSRect(x: 0, y: y, width: width, height: rowH))   // 每个产品一个容器，单选钮按容器分组
+            let title = NSTextField(labelWithString: p.name)
+            title.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
+            title.frame = NSRect(x: 0, y: rowH - 22, width: width, height: 18)
+            let detected = NSTextField(labelWithString: "检测到：" + detectedText(p))
+            detected.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+            detected.textColor = .secondaryLabelColor
+            detected.frame = NSRect(x: 0, y: rowH - 40, width: width, height: 16)
+            let account = NSButton(radioButtonWithTitle: p.accountTitle, target: nil, action: nil)
+            let api = NSButton(radioButtonWithTitle: "API", target: nil, action: nil)
+            account.frame = NSRect(x: 0, y: rowH - 62, width: 150, height: 18)
+            api.frame = NSRect(x: 156, y: rowH - 62, width: 70, height: 18)
+            account.state = .on
+            let note = NSTextField(labelWithString: p.resource == "codex-mode" ? "切换会退出并重新打开 ChatGPT" : (hasDesktop ? "切换会重启 Claude 桌面应用" : ""))
+            note.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+            note.textColor = .tertiaryLabelColor
+            note.frame = NSRect(x: 232, y: rowH - 62, width: width - 232, height: 16)
+            for v in [title, detected, account, api, note] as [NSView] { box.addSubview(v) }
+            view.addSubview(box)
+            choice[p.name] = api
+        }
+        alert.accessoryView = view
+        alert.addButton(withTitle: "应用")
+        alert.addButton(withTitle: "稍后再说")
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        UserDefaults.standard.set(true, forKey: "onboardingDone")
+        guard response == .alertFirstButtonReturn else { log("初始设置：稍后再说"); return }
+        // 只对“选的和现状不一致”的产品执行切换；混合状态也算不一致，重新切一次把两个轴对齐
+        var plan: [(Product, [[String]])] = []
+        for p in targets {
+            let wantApi = choice[p.name]?.state == .on
+            let m = mode[p.name] ?? ""
+            if p.resource == "codex-mode" {
+                let clean = wantApi ? (m == "api" && !isMixed(p)) : ((m == "chatgpt" || m == "none") && !isMixed(p))
+                if !clean { plan.append((p, [[wantApi ? "api" : "chatgpt"]])) }
+            } else {
+                var steps: [[String]] = []
+                if wantApi {
+                    if m != "api" { steps.append(["api"]) }
+                    if hasDesktop && desktopMode != "gateway" { steps.append(["desktop", "gateway"]) }
+                } else {
+                    if m != "account" { steps.append(["account"]) }
+                    if hasDesktop && desktopMode == "gateway" { steps.append(["desktop", "account"]) }
+                }
+                if !steps.isEmpty { plan.append((p, steps)) }
+            }
+        }
+        log("初始设置：" + (plan.isEmpty ? "无需改动" : plan.map { "\($0.0.name) " + $0.1.map { $0.joined(separator: " ") }.joined(separator: "，") }.joined(separator: "；")))
+        runPlan(plan)
+    }
+    // 依次对多个产品执行切换（每个产品内部的步骤也按顺序），前一个做完再做下一个
+    private func runPlan(_ plan: [(Product, [[String]])]) {
+        guard let first = plan.first else { return }
+        doSwitch(first.0, steps: first.1) { [weak self] in self?.runPlan(Array(plan.dropFirst())) }
     }
 
     // MARK: 切换
     @objc private func codexToApi() { doSwitch(codex, steps: [["api"]]) }
     @objc private func claudeToApi() { doSwitch(claude, steps: [["api"]] + (desktopMode == "gateway" ? [["desktop", "gateway"]] : [])) }
     // 一次切换可能是几条脚本命令（比如先切终端再切桌面应用），按顺序执行，哪条失败就停在哪条
-    private func doSwitch(_ p: Product, steps: [[String]]) {
-        guard !busy, !steps.isEmpty else { return }
+    private func doSwitch(_ p: Product, steps: [[String]], then: (() -> Void)? = nil) {
+        guard !busy, !steps.isEmpty else { then?(); return }
         log("用户点击：\(p.name) 执行 " + steps.map { $0.joined(separator: " ") }.joined(separator: "，"))
         let restartsApp = p.resource == "codex-mode" || steps.contains { $0.first == "desktop" }
         busy = true
@@ -480,6 +580,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let (args, result) = failed {
                     let text = (result.err + "\n" + result.out).trimmingCharacters(in: .whitespacesAndNewlines)
                     self.showError(title: "\(p.name) 切换失败（\(args.joined(separator: " "))，退出码 \(result.code)）", text: text, retry: (p, args.joined(separator: " ")))
+                } else {
+                    then?()
                 }
             }
         }
@@ -792,6 +894,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if desktop {
             addSmall("切换会重启 Claude 桌面应用，会话列表自动同步", nil)
+        }
+        if isMixed(p) {
+            add(m == "api" ? "⚠ 配置指向 API 网关，但 Codex 用 ChatGPT 账号登录，请求会失败；把开关再切一次即可修正"
+                           : "⚠ 配置是 ChatGPT 账号模式，但 Codex 用 API key 登录；把开关再切一次即可修正", enabled: false)
         }
         for l in info where isWarning(l) { add("⚠ " + l.key + (l.value.isEmpty ? "" : "：" + l.value), enabled: false) }
         if let stale = staleSessions[p.name], !stale.isEmpty {
