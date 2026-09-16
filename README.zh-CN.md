@@ -37,7 +37,7 @@ AA Switch 住在 Mac 的菜单栏里，点开就能看到 Codex 和 Claude Code 
 2. 把 **AA Switch** 拖进“应用程序”文件夹，打开它。
 3. 屏幕右上角会出现一个小开关。
 
-需要 macOS 13 或更新版本。Codex 桌面应用、Claude Code（终端或 IDE 插件）至少装一个。
+需要 macOS 13 或更新版本，Intel 和 Apple 芯片都支持（通用二进制）。Codex 桌面应用、Claude Code（终端或 IDE 插件）至少装一个。
 
 ## 使用
 

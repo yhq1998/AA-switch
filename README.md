@@ -37,7 +37,7 @@ AA Switch lives in your Mac's menu bar. Open it to see which side Codex and Clau
 2. Drag **AA Switch** into your Applications folder and open it.
 3. Look for the little switch at the top right of your screen.
 
-Requires macOS 13 or later, and at least one of: the Codex desktop app, or Claude Code (terminal or IDE extension).
+Requires macOS 13 or later on either Intel or Apple silicon (the app is a universal binary), and at least one of: the Codex desktop app, or Claude Code (terminal or IDE extension).
 
 ## Use
 
