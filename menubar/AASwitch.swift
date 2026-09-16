@@ -541,15 +541,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         log("初始设置：" + (plan.isEmpty ? "无需改动" : plan.map { "\($0.0.name) " + $0.1.map { $0.joined(separator: " ") }.joined(separator: "，") }.joined(separator: "；")))
         runPlan(plan)
     }
-    // 依次对多个产品执行切换（每个产品内部的步骤也按顺序），前一个做完再做下一个
+    // 依次对多个产品执行切换（每个产品内部的步骤也按顺序），前一个做完再做下一个；切到 API 的先确保配好
     private func runPlan(_ plan: [(Product, [[String]])]) {
         guard let first = plan.first else { return }
-        doSwitch(first.0, steps: first.1) { [weak self] in self?.runPlan(Array(plan.dropFirst())) }
+        let rest = Array(plan.dropFirst())
+        if first.1.contains(where: { $0.first == "api" }) {
+            ensureConfiguredThenSwitch(first.0, steps: first.1) { [weak self] in self?.runPlan(rest) }
+        } else {
+            doSwitch(first.0, steps: first.1) { [weak self] in self?.runPlan(rest) }
+        }
     }
 
     // MARK: 切换
-    @objc private func codexToApi() { doSwitch(codex, steps: [["api"]]) }
-    @objc private func claudeToApi() { doSwitch(claude, steps: [["api"]] + (desktopMode == "gateway" ? [["desktop", "gateway"]] : [])) }
+    @objc private func codexToApi() { ensureConfiguredThenSwitch(codex, steps: [["api"]]) }
+    @objc private func claudeToApi() { ensureConfiguredThenSwitch(claude, steps: [["api"]] + (desktopMode == "gateway" ? [["desktop", "gateway"]] : [])) }
+    // 切到 API 之前先确认地址和 key 都齐了：没有就弹配置表单，保存后再执行 steps；用户取消就什么都不做
+    private func ensureConfiguredThenSwitch(_ p: Product, steps: [[String]], then: (() -> Void)? = nil) {
+        let info = statusInfo(p)
+        let url = info.first { Self.urlKeys.contains($0.key) }?.value ?? ""
+        let configured = !url.isEmpty && url != "未配置"
+        if configured && run(p, ["find-key", url]).code == 0 { doSwitch(p, steps: steps, then: then); return }
+        log("\(p.name) 切到 API 前还没配好（地址：\(url.isEmpty ? "无" : url)），先弹配置表单")
+        openConfigure(p) { [weak self] saved in
+            guard let self = self else { return }
+            if saved { self.doSwitch(p, steps: steps, then: then) } else { then?() }
+        }
+    }
     // 一次切换可能是几条脚本命令（比如先切终端再切桌面应用），按顺序执行，哪条失败就停在哪条
     private func doSwitch(_ p: Product, steps: [[String]], then: (() -> Void)? = nil) {
         guard !busy, !steps.isEmpty else { then?(); return }
@@ -662,15 +679,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: 配置表单（原生弹窗），保存后在 API 模式下立即重新切换让新地址生效
     @objc private func configureCodex() { openConfigure(codex) }
     @objc private func configureClaude() { openConfigure(claude) }
-    private func openConfigure(_ p: Product) {
+    // then：表单关掉后的回调，参数是“保存成功了没有”；从“切到 API 但还没配好”的流程进来时用它接着切换
+    private func openConfigure(_ p: Product, then: ((Bool) -> Void)? = nil) {
         var baseURL = "", headers = ""
         for line in run(p, ["config"]).out.split(separator: "\n") {
             if line.hasPrefix("base_url=") { baseURL = String(line.dropFirst(9)) }
             else if line.hasPrefix("headers=") { headers = String(line.dropFirst(8)) }
         }
-        showConfigureForm(p, baseURL: baseURL, headers: headers, error: nil)
+        showConfigureForm(p, baseURL: baseURL, headers: headers, error: nil, then: then)
     }
-    private func showConfigureForm(_ p: Product, baseURL: String, headers: String, error: String?) {
+    // 地址规范化：去空格和末尾斜杠；Codex 是 OpenAI 风格，只给了域名就补 /v1；Claude Code 自己会加 /v1，填了就去掉
+    private func normalizeURL(_ raw: String, for p: Product) -> (String, String?) {
+        var url = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !url.isEmpty else { return ("", "请填写 API 地址。") }
+        guard url.lowercased().hasPrefix("https://") || url.lowercased().hasPrefix("http://") else { return (url, "地址要以 https:// 开头，例如 \(p.urlPlaceholder)。") }
+        guard url.rangeOfCharacter(from: .whitespacesAndNewlines) == nil, !url.contains("\""), !url.contains("\\") else { return (url, "地址里不能有空格或引号。") }
+        while url.hasSuffix("/") { url.removeLast() }
+        let afterScheme = url.drop { $0 != ":" }.dropFirst(3)   // 去掉 https://
+        guard let host = afterScheme.split(separator: "/").first, host.contains(".") else { return (url, "地址里看不到域名，例如 \(p.urlPlaceholder)。") }
+        if p.resource == "codex-mode" {
+            if !afterScheme.contains("/") { url += "/v1" }
+        } else if url.hasSuffix("/v1") {
+            url = String(url.dropLast(3))
+        }
+        return (url, nil)
+    }
+    // 用 key 探测地址：请求 models 接口。2xx 通过；401/403 是 key 不对；其他情况告诉用户但允许坚持保存
+    private func probe(_ p: Product, url: String, key: String, headers: String) -> (ok: Bool, message: String?, blocking: Bool) {
+        let endpoint = p.resource == "codex-mode" ? url + "/models" : url + "/v1/models"
+        var args = ["-s", "-o", "/dev/null", "-m", "12", "-w", "%{http_code}", endpoint, "-H", "Authorization: Bearer " + key]
+        for pair in headers.split(separator: ",") {
+            let kv = pair.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            if kv.count == 2, !kv[0].isEmpty { args += ["-H", kv[0] + ": " + kv[1]] }
+        }
+        let (code, out) = shell("/usr/bin/curl", args)
+        let status = Int(out.trimmingCharacters(in: .whitespacesAndNewlines).suffix(3)) ?? 0
+        if code != 0 || status == 0 { return (false, "连不上 \(endpoint)（超时或域名不对）。", false) }
+        switch status {
+        case 200..<300: return (true, nil, false)
+        case 401, 403: return (false, "这个 key 在 \(url) 上无效（HTTP \(status)）。每个网关的 key 不通用，请填该地址对应的 key。", true)
+        case 404: return (false, "地址能连上，但 \(endpoint) 不存在（HTTP 404），地址的路径可能不对。", false)
+        default: return (false, "地址返回了 HTTP \(status)，可能不是一个兼容的网关。", false)
+        }
+    }
+    private func showConfigureForm(_ p: Product, baseURL: String, headers: String, error: String?, then: ((Bool) -> Void)? = nil) {
         let alert = NSAlert()
         alert.messageText = "配置 \(p.name) API"
         alert.informativeText = error ?? (p.urlHint + " key 只保存在 macOS 钥匙串里，按地址域名保存，Codex 和 Claude Code 用同一个网关时共用一个 key。换地址时记得把 key 也换成该地址对应的。")
@@ -695,19 +747,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.addButton(withTitle: "取消")
         alert.window.initialFirstResponder = urlField
         NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let url = urlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard alert.runModal() == .alertFirstButtonReturn else { then?(false); return }
         let hdr = headerField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = keyField.stringValue
-        if url.isEmpty { showConfigureForm(p, baseURL: url, headers: hdr, error: "请填写 API 地址。"); return }
-        if key.isEmpty && run(p, ["has-key", url]).code != 0 {
-            showConfigureForm(p, baseURL: url, headers: hdr, error: "这个地址还没有保存过 key，请填写 API key。"); return
+        let key = keyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let (url, urlError) = normalizeURL(urlField.stringValue, for: p)
+        if let urlError = urlError { showConfigureForm(p, baseURL: url, headers: hdr, error: urlError, then: then); return }
+        // key 留空时看这个地址有没有存过（Codex 还会尝试当前在用的 / 旧版条目）
+        let keyForProbe = key.isEmpty ? (run(p, ["find-key", url]).code == 0 ? run(p, ["key", url]).out.trimmingCharacters(in: .whitespacesAndNewlines) : "") : key
+        if keyForProbe.isEmpty {
+            showConfigureForm(p, baseURL: url, headers: hdr, error: "这个地址还没有保存过 key，请填写 API key。", then: then); return
+        }
+        let check = probe(p, url: url, key: keyForProbe, headers: hdr)
+        if !check.ok {
+            if check.blocking { showConfigureForm(p, baseURL: url, headers: hdr, error: check.message, then: then); return }
+            let ask = NSAlert()
+            ask.messageText = "地址校验没有通过"
+            ask.informativeText = (check.message ?? "") + "\n\n可以返回修改，也可以坚持保存。"
+            ask.alertStyle = .warning
+            ask.addButton(withTitle: "返回修改")
+            ask.addButton(withTitle: "仍然保存")
+            if ask.runModal() == .alertFirstButtonReturn { showConfigureForm(p, baseURL: url, headers: hdr, error: nil, then: then); return }
         }
         let result = run(p, ["configure"],
                          extraEnv: [p.configureEnvPrefix + "_BASE_URL": url, p.configureEnvPrefix + "_HEADERS": hdr, p.configureEnvPrefix + "_KEY_STDIN": "1"],
                          input: key + "\n")
-        if result.code != 0 { showConfigureForm(p, baseURL: url, headers: hdr, error: result.err.replacingOccurrences(of: "错误：", with: "")); return }
+        if result.code != 0 { showConfigureForm(p, baseURL: url, headers: hdr, error: result.err.replacingOccurrences(of: "错误：", with: ""), then: then); return }
         log("\(p.name) 配置已保存：\(url)")
+        if let then = then {   // 从切换流程进来的：保存完接着切，不再弹“已保存”
+            refresh()
+            then(true)
+            return
+        }
         if mode[p.name] == "api" {   // 当前就在 API 模式：立即重新切换，让新地址 / 新 key 生效
             doSwitch(p, steps: [["api"]] + (p.resource == "claude-mode" && desktopMode == "gateway" ? [["desktop", "gateway"]] : []))
         } else {
@@ -868,16 +938,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard let self = self else { return }
                 let on = i == 1
                 self.menu.cancelTracking()
-                if on && !configured { self.openConfigure(p); return }
                 var steps: [[String]] = []
                 if on {
                     if m != "api" { steps.append(["api"]) }
                     if desktop && self.desktopMode != "gateway" { steps.append(["desktop", "gateway"]) }
+                    self.ensureConfiguredThenSwitch(p, steps: steps)
                 } else {
                     if m != p.accountWord { steps.append([p.accountWord]) }
                     if desktop && self.desktopMode == "gateway" { steps.append(["desktop", "account"]) }
+                    self.doSwitch(p, steps: steps)
                 }
-                self.doSwitch(p, steps: steps)
             }
             menu.addItem(row)
         }

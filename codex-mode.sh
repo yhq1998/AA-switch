@@ -11,6 +11,7 @@
 #   codex-mode mode         只输出一个词 api / chatgpt / none，供菜单栏小工具等程序读取
 #   codex-mode version      输出脚本版本号
 #   codex-mode config       输出已保存的地址和请求头（不含 key），供程序读取
+#   codex-mode find-key URL  不问用户地找该地址的 key（钥匙串 → 当前在用的 → 旧版条目），找到就存进钥匙串，退出码 0 表示有
 #   codex-mode has-key URL  钥匙串里有没有该地址的 key（退出码 0 表示有）
 #   codex-mode key URL      输出钥匙串里该地址的 key（供配置表单回填）
 #
@@ -30,7 +31,7 @@
 #   非交互配置：CODEX_MODE_BASE_URL、CODEX_MODE_HEADERS（名称=值，逗号分隔）、CODEX_MODE_KEY_STDIN=1（从标准输入读 key，
 #   可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。
 set -eu
-CODEX_MODE_VERSION="2.2.2"
+CODEX_MODE_VERSION="2.2.3"
 
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CFG="$CODEX_HOME/config.toml"
@@ -336,7 +337,7 @@ current_api_key() {  # Codex 当前用 API key 登录时，取这个正在用的
   [ "$(auth_mode)" = api_key ] || return 0
   sed -n 's/.*"OPENAI_API_KEY"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CODEX_HOME/auth.json" 2>/dev/null | head -n1
 }
-get_key() {  # 优先级：钥匙串里这个地址的 key → 当前正在用的 key → 旧版脚本的钥匙串条目 → 手动输入
+discover_key() {  # 不问用户地找 key：钥匙串里这个地址的 key → 当前正在用的 key → 旧版脚本的钥匙串条目；找到就存进钥匙串并输出，找不到输出空
   local svc key; svc="$(kc_service "$BASE_URL")"
   key="$(kc_get "$svc")"
   if [ -z "$key" ]; then
@@ -347,6 +348,11 @@ get_key() {  # 优先级：钥匙串里这个地址的 key → 当前正在用�
     key="$(security find-generic-password -s "$LEGACY_KC" -w 2>/dev/null || true)"
     if [ -n "$key" ]; then kc_set "$svc" "$key"; say "已把旧版脚本保存的 key 迁移到钥匙串条目 ${svc}；若登录后提示 key 无效，请用 codex-mode set-key 换成正确的 key。"; fi
   fi
+  printf '%s' "$key"
+}
+get_key() {  # 优先级：discover_key 能找到的 → 手动输入
+  local svc key; svc="$(kc_service "$BASE_URL")"
+  key="$(discover_key)"
   if [ -z "$key" ]; then
     key="$(ask_secret "请输入 $(url_host "$BASE_URL") 的 API key")" || exit 1
     [ -n "$key" ] || die "未输入 key，已取消。"
@@ -426,6 +432,7 @@ do_configure() {
     [ "$hdr" = - ] && hdr=""
   fi
   url="${url%/}"; valid_url "$url" || die "地址格式不对：${url}（需要以 http:// 或 https:// 开头的完整地址）"
+  case "${url#*://}" in */*) ;; *) url="$url/v1"; say "提示：OpenAI 风格的地址通常以 /v1 结尾，已补上：${url}" ;; esac
   HEADERS="$(pairs_to_toml "$hdr")"; BASE_URL="$url"
   conf_set base_url "$BASE_URL"; conf_set headers "$HEADERS"
   say "已保存到 ${CONF}。"
@@ -464,6 +471,10 @@ case "$1" in
   version) echo "$CODEX_MODE_VERSION" ;;
   config) show_config ;;
   has-key) [ -n "${2:-}" ] && valid_url "$2" || die "用法：codex-mode has-key URL"; [ -n "$(kc_get "$(kc_service "$2")")" ] ;;
+  find-key)  # 不问用户地找 key，找到退出码 0；只有目标地址就是配置里的网关时才做“当前在用的 / 旧版条目”迁移，别的地址只查钥匙串
+    [ -n "${2:-}" ] && valid_url "$2" || die "用法：codex-mode find-key URL"
+    load_conf >/dev/null 2>&1 || true
+    if [ -n "$BASE_URL" ] && [ "$(url_host "$2")" = "$(url_host "$BASE_URL")" ]; then BASE_URL="$2"; [ -n "$(discover_key)" ]; else [ -n "$(kc_get "$(kc_service "$2")")" ]; fi ;;
   key) [ -n "${2:-}" ] && valid_url "$2" || die "用法：codex-mode key URL"; kc_get "$(kc_service "$2")" ;;
   *) usage ;;
 esac

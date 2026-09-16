@@ -38,7 +38,7 @@
 #   非交互配置：CLAUDE_MODE_BASE_URL、CLAUDE_MODE_HEADERS（名称=值，逗号分隔）、CLAUDE_MODE_KEY_STDIN=1（从标准输入读
 #   key，可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。
 set -eu
-CLAUDE_MODE_VERSION="1.2.3"
+CLAUDE_MODE_VERSION="1.2.4"
 
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS="$CLAUDE_HOME/settings.json"
@@ -456,7 +456,7 @@ case "$1" in
   desktop) case "${2:-}" in gateway) mode_desktop_gateway ;; account) mode_desktop_account ;; sync) desktop_installed || die "没有找到 ${DESKTOP_APP}.app。"; backup_desktop; desktop_sync_sessions ;; *) die "用法：claude-mode desktop gateway|account|sync" ;; esac ;;
   version) echo "$CLAUDE_MODE_VERSION" ;;
   config) show_config ;;
-  has-key) [ -n "${2:-}" ] && valid_url "$2" || die "用法：claude-mode has-key URL"; [ -n "$(kc_get "$(kc_service "$2")")" ] ;;
+  has-key|find-key) [ -n "${2:-}" ] && valid_url "$2" || die "用法：claude-mode has-key URL"; [ -n "$(kc_get "$(kc_service "$2")")" ] ;;
   key) [ -n "${2:-}" ] && valid_url "$2" || die "用法：claude-mode key URL"; kc_get "$(kc_service "$2")" ;;
   *) usage ;;
 esac
