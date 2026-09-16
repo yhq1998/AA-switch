@@ -401,8 +401,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         process.waitUntilExit()
         group.wait()
         let errText = String(decoding: box.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let outText = String(decoding: outData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         log("\(p.resource) \(args.joined(separator: " ")) → 退出码 \(process.terminationStatus)，耗时 \(String(format: "%.1f", Date().timeIntervalSince(started)))s"
-            + (errText.isEmpty ? "" : "\n  " + errText.replacingOccurrences(of: "\n", with: "\n  ")))
+            + (errText.isEmpty ? "" : "\n  " + errText.replacingOccurrences(of: "\n", with: "\n  "))
+            + (process.terminationStatus != 0 && !outText.isEmpty ? "\n  [stdout] " + outText.replacingOccurrences(of: "\n", with: "\n  ") : ""))
         return Result(code: process.terminationStatus,
                       out: String(decoding: outData, as: UTF8.self),
                       err: errText)
@@ -489,8 +491,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "好")
         alert.addButton(withTitle: "在终端中运行")
+        alert.addButton(withTitle: "导出诊断信息")
         NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertSecondButtonReturn { openTerminal(retry.0, command: retry.1) }
+        switch alert.runModal() {
+        case .alertSecondButtonReturn: openTerminal(retry.0, command: retry.1)
+        case .alertThirdButtonReturn: exportDiagnostics()
+        default: break
+        }
+    }
+
+    // MARK: 导出诊断信息：把版本、系统、芯片、脚本状态和最近的日志写成一个文本文件放到桌面，方便发给别人排查
+    @objc private func exportDiagnostics() {
+        log("用户点击：导出诊断信息")
+        func sh(_ cmd: String, _ args: [String]) -> String {
+            let p = Process(); p.executableURL = URL(fileURLWithPath: cmd); p.arguments = args
+            let out = Pipe(); p.standardOutput = out; p.standardError = out
+            do { try p.run() } catch { return "（无法运行 \(cmd)：\(error.localizedDescription)）" }
+            let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            p.waitUntilExit()
+            return text.trimmingCharacters(in: .whitespacesAndNewlines) + (p.terminationStatus == 0 ? "" : "\n（退出码 \(p.terminationStatus)）")
+        }
+        let fm = FileManager.default
+        var r: [String] = []
+        r.append("\(appName) 诊断信息  \(ISO8601DateFormatter().string(from: Date()))")
+        r.append("")
+        r.append("== 应用")
+        r.append("版本：\(appVersion)（build \(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?")）")
+        r.append("位置：\(Bundle.main.bundlePath)")
+        r.append("签名：" + sh("/usr/bin/codesign", ["-dv", "--verbose=2", Bundle.main.bundlePath]).split(separator: "\n").filter { $0.hasPrefix("Authority=") || $0.hasPrefix("TeamIdentifier=") }.joined(separator: "；"))
+        r.append("")
+        r.append("== 系统")
+        r.append("macOS：\(ProcessInfo.processInfo.operatingSystemVersionString)")
+        r.append("芯片：" + sh("/usr/bin/uname", ["-m"]) + "，Rosetta 下运行：" + (sh("/usr/sbin/sysctl", ["-n", "sysctl.proc_translated"]) == "1" ? "是" : "否"))
+        r.append("用户：\(NSUserName())，HOME：\(NSHomeDirectory())")
+        r.append("PATH：\(ProcessInfo.processInfo.environment["PATH"] ?? "")")
+        r.append("bash：" + (sh("/bin/bash", ["--version"]).split(separator: "\n").first.map(String.init) ?? ""))
+        r.append("")
+        for p in products {
+            r.append("== \(p.name)（\(p.resource)）")
+            r.append("数据目录：\(p.home)")
+            r.append("脚本：\(p.script)  存在：\(fm.fileExists(atPath: p.script))  可执行：\(fm.isExecutableFile(atPath: p.script))  版本：\(scriptVersion[p.name] ?? "?")")
+            r.append("模式：\(mode[p.name] ?? "?")" + (p.resource == "claude-mode" ? "，桌面应用：\(desktopMode)" : ""))
+            let st = run(p, ["status"])
+            r.append("status（退出码 \(st.code)）：")
+            r.append(st.out.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "\n").map { "  " + $0 }.joined(separator: "\n"))
+            if !st.err.isEmpty { r.append("  [stderr] " + st.err.replacingOccurrences(of: "\n", with: "\n  ")) }
+            r.append("")
+        }
+        r.append("== 相关程序")
+        r.append("codex：" + sh("/usr/bin/which", ["codex"]))
+        r.append("claude：" + sh("/usr/bin/which", ["claude"]))
+        for app in ["ChatGPT", "Codex", "Claude"] {
+            for dir in ["/Applications", NSHomeDirectory() + "/Applications"] where fm.fileExists(atPath: "\(dir)/\(app).app") {
+                let v = (NSDictionary(contentsOfFile: "\(dir)/\(app).app/Contents/Info.plist")?["CFBundleShortVersionString"] as? String) ?? "?"
+                r.append("\(app).app：\(dir)，版本 \(v)")
+            }
+        }
+        r.append("")
+        r.append("== 最近的日志（\(logPath)）")
+        let logText = (try? String(contentsOfFile: logPath, encoding: .utf8)) ?? "（读不到日志）"
+        r.append(logText.split(separator: "\n").suffix(300).joined(separator: "\n"))
+        let stamp = { let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmmss"; return f.string(from: Date()) }()
+        let file = fm.homeDirectoryForCurrentUser.appendingPathComponent("Desktop/\(appName) 诊断 \(stamp).txt")
+        do {
+            try r.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            NSWorkspace.shared.activateFileViewerSelecting([file])
+        } catch {
+            let alert = NSAlert(); alert.messageText = "导出失败"; alert.informativeText = error.localizedDescription; alert.runModal()
+        }
     }
 
     // MARK: 配置表单（原生弹窗），保存后在 API 模式下立即重新切换让新地址生效
@@ -642,6 +710,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         add("刷新状态", #selector(refresh), enabled: !busy)
         add("检查更新", #selector(checkUpdateManually), enabled: !busy)
+        add("导出诊断信息…", #selector(exportDiagnostics), enabled: !busy)
         let login = add("开机自动启动", #selector(toggleLogin))
         login.state = loginEnabled ? .on : .off
         menu.addItem(.separator())
