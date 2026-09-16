@@ -26,64 +26,56 @@ struct Product {
     var backups: String { home + "/" + resource + "-backups" }
 }
 
-// 自己画的拨动开关。菜单窗口永远不是 key window，系统的 NSSwitch 在里面只会显示成灰色的未激活样式，所以自己画：开 = 强调色
-final class ModeToggle: NSControl {
-    var isOn = false { didSet { needsDisplay = true } }
-    override var isEnabled: Bool { didSet { alphaValue = isEnabled ? 1 : 0.4 } }
+// 菜单里的模式行：一个分段控件，每格等宽，选中的那格用强调色高亮，点另一格就切换。
+// 菜单窗口永远不是 key window，系统控件在里面只会画成灰色的未激活样式，所以自己画
+final class SegmentRow: NSView {
+    static let font = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
+    static func textWidth(_ s: String) -> CGFloat { ceil((s as NSString).size(withAttributes: [.font: font]).width) }
+    private let labels: [String]
+    private var selected: Int?
+    private let enabled: Bool
+    private let onSelect: (Int) -> Void
+    private var rects: [NSRect] = []
+    init(labels: [String], selected: Int?, enabled: Bool, segmentWidth: CGFloat, onSelect: @escaping (Int) -> Void) {
+        self.labels = labels
+        self.selected = selected
+        self.enabled = enabled
+        self.onSelect = onSelect
+        super.init(frame: .zero)
+        let height: CGFloat = 24
+        var x: CGFloat = 14   // 和普通菜单项的文字左对齐
+        for _ in labels { rects.append(NSRect(x: x, y: 4, width: segmentWidth, height: height)); x += segmentWidth }
+        frame = NSRect(x: 0, y: 0, width: x + 14, height: height + 8)
+        alphaValue = enabled ? 1 : 0.4
+    }
+    required init?(coder: NSCoder) { nil }
     override func draw(_ dirtyRect: NSRect) {
-        let track = bounds.insetBy(dx: 0.5, dy: 0.5)
-        (isOn ? NSColor.controlAccentColor : NSColor.systemGray.withAlphaComponent(0.4)).setFill()
-        NSBezierPath(roundedRect: track, xRadius: track.height / 2, yRadius: track.height / 2).fill()
-        let d = track.height - 4
-        let knob = NSRect(x: isOn ? track.maxX - 2 - d : track.minX + 2, y: track.minY + 2, width: d, height: d)
-        NSColor.black.withAlphaComponent(0.15).setFill()
-        NSBezierPath(ovalIn: knob.offsetBy(dx: 0, dy: -0.5).insetBy(dx: -0.5, dy: -0.5)).fill()
-        NSColor.white.setFill()
-        NSBezierPath(ovalIn: knob).fill()
+        guard let first = rects.first, let last = rects.last else { return }
+        let radius: CGFloat = 6
+        NSColor.quaternaryLabelColor.setFill()
+        NSBezierPath(roundedRect: first.union(last), xRadius: radius, yRadius: radius).fill()
+        for (i, r) in rects.enumerated() {
+            if i == selected {
+                NSColor.controlAccentColor.setFill()
+                NSBezierPath(roundedRect: r.insetBy(dx: 1.5, dy: 1.5), xRadius: radius - 1, yRadius: radius - 1).fill()
+            } else if i > 0 && i - 1 != selected {
+                NSColor.separatorColor.setFill()
+                NSRect(x: r.minX - 0.5, y: r.minY + 6, width: 1, height: r.height - 12).fill()
+            }
+            let attrs: [NSAttributedString.Key: Any] = [.font: Self.font, .foregroundColor: i == selected ? NSColor.white : NSColor.labelColor]
+            let size = (labels[i] as NSString).size(withAttributes: attrs)
+            (labels[i] as NSString).draw(at: NSPoint(x: r.midX - size.width / 2, y: r.midY - size.height / 2), withAttributes: attrs)
+        }
     }
     override func mouseDown(with event: NSEvent) {}
     override func mouseUp(with event: NSEvent) {
-        guard isEnabled, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
-        isOn.toggle()
-        sendAction(action, to: target)
+        guard enabled else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        guard let i = rects.firstIndex(where: { $0.contains(p) }), i != selected else { return }
+        selected = i
+        needsDisplay = true
+        onSelect(i)
     }
-}
-
-// 菜单里的模式行：左边账号模式、右边 API 模式，中间一个开关（开 = API）；当前模式的字加粗，另一边变灰。点字也能切
-final class ModeRow: NSView {
-    private let left = NSTextField(labelWithString: "")
-    private let right = NSTextField(labelWithString: "API 模式")
-    private let toggle = ModeToggle(frame: NSRect(x: 0, y: 0, width: 38, height: 22))
-    private let onChange: (Bool) -> Void   // 参数：开关打开 = 切到 API
-    init(accountTitle: String, isOn: Bool, enabled: Bool, onChange: @escaping (Bool) -> Void) {
-        self.onChange = onChange
-        super.init(frame: .zero)
-        let bold = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize), plain = NSFont.systemFont(ofSize: NSFont.systemFontSize)
-        left.stringValue = accountTitle
-        left.font = isOn ? plain : bold
-        left.textColor = isOn ? .secondaryLabelColor : .labelColor
-        right.font = isOn ? bold : plain
-        right.textColor = isOn ? .labelColor : .secondaryLabelColor
-        toggle.isOn = isOn
-        toggle.isEnabled = enabled
-        toggle.target = self
-        toggle.action = #selector(toggled)
-        left.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clickLeft)))
-        right.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clickRight)))
-        let height: CGFloat = 30
-        var x: CGFloat = 14   // 和普通菜单项的文字左对齐
-        for v in [left, toggle, right] as [NSView] {
-            (v as? NSTextField)?.sizeToFit()
-            v.frame = NSRect(x: x, y: (height - v.frame.height) / 2, width: v.frame.width, height: v.frame.height)
-            addSubview(v)
-            x += v.frame.width + 10
-        }
-        frame = NSRect(x: 0, y: 0, width: x + 11, height: height)
-    }
-    required init?(coder: NSCoder) { nil }
-    @objc private func toggled() { onChange(toggle.isOn) }
-    @objc private func clickLeft() { guard toggle.isEnabled, toggle.isOn else { return }; toggle.isOn = false; toggled() }
-    @objc private func clickRight() { guard toggle.isEnabled, !toggle.isOn else { return }; toggle.isOn = true; toggled() }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -424,6 +416,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         desktopMode = result.code == 0 && ["gateway", "account", "absent"].contains(word) ? word : "unknown"
     }
     private var hasDesktop: Bool { ["gateway", "account"].contains(desktopMode) }
+    // 分段控件每格的宽度：两个产品所有标签里最宽的那个加左右留白，让两行完全对齐
+    private var segmentWidth: CGFloat {
+        (products.flatMap { [$0.accountTitle, "API"] }.map(SegmentRow.textWidth).max() ?? 40) + 28
+    }
     @objc private func refresh() {
         guard !busy else { return }
         readModes()
@@ -504,8 +500,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             detected.frame = NSRect(x: 0, y: rowH - 40, width: width, height: 16)
             let seg = NSSegmentedControl(labels: [p.accountTitle, "API"], trackingMode: .selectOne, target: nil, action: nil)
             seg.selectedSegment = 0   // 默认账号
+            seg.segmentDistribution = .fillEqually
             seg.sizeToFit()
-            seg.frame = NSRect(x: 0, y: rowH - 64, width: seg.frame.width, height: seg.frame.height)
+            seg.frame = NSRect(x: 0, y: rowH - 64, width: segmentWidth * 2, height: seg.frame.height)
             let note = NSTextField(labelWithString: p.resource == "codex-mode" ? "切换会退出并重新打开 ChatGPT" : (hasDesktop ? "切换会重启 Claude 桌面应用" : ""))
             note.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
             note.textColor = .tertiaryLabelColor
@@ -861,12 +858,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let desktop = p.resource == "claude-mode" && hasDesktop
         let isOn = m == "api" && (!desktop || desktopMode == "gateway")
         let mixed = desktop && ((m == "api") != (desktopMode == "gateway"))
+        // 没切换过（Codex 默认配置）或两边不一致时哪格都不高亮
+        let selected: Int? = isOn ? 1 : ((m == p.accountWord && !mixed) ? 0 : nil)
         if busy && busyProduct == p.name {
             add(busyText, enabled: false)
         } else {
             let row = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            row.view = ModeRow(accountTitle: p.accountTitle, isOn: isOn, enabled: !busy) { [weak self] on in
+            row.view = SegmentRow(labels: [p.accountTitle, "API"], selected: selected, enabled: !busy, segmentWidth: segmentWidth) { [weak self] i in
                 guard let self = self else { return }
+                let on = i == 1
                 self.menu.cancelTracking()
                 if on && !configured { self.openConfigure(p); return }
                 var steps: [[String]] = []
@@ -888,15 +888,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             addSmall("还没配置 API 地址，点击填写…", configure)
         }
+        if m == "none" {
+            addSmall("还没用 \(appName) 切换过，当前按 Codex 自己的设置运行；点一格开始管理", nil)
+        }
         if mixed {
-            add("⚠ 命令行\(m == "api" ? "在 API" : "在账号")、桌面应用\(desktopMode == "gateway" ? "在网关" : "在账号")，打开开关会把两边都切到 API", enabled: false)
+            add("⚠ 命令行\(m == "api" ? "在 API" : "在账号")、桌面应用\(desktopMode == "gateway" ? "在网关" : "在账号")，点 API 会把两边都切到 API", enabled: false)
         }
         if desktop {
             addSmall("切换会重启 Claude 桌面应用，会话列表自动同步", nil)
         }
         if isMixed(p) {
-            add(m == "api" ? "⚠ 配置指向 API 网关，但 Codex 用 ChatGPT 账号登录，请求会失败；把开关再切一次即可修正"
-                           : "⚠ 配置是 ChatGPT 账号模式，但 Codex 用 API key 登录；把开关再切一次即可修正", enabled: false)
+            add(m == "api" ? "⚠ 配置指向 API 网关，但 Codex 用 ChatGPT 账号登录，请求会失败；再点一次当前模式即可修正"
+                           : "⚠ 配置是 ChatGPT 账号模式，但 Codex 用 API key 登录；再点一次当前模式即可修正", enabled: false)
         }
         for l in info where isWarning(l) { add("⚠ " + l.key + (l.value.isEmpty ? "" : "：" + l.value), enabled: false) }
         if let stale = staleSessions[p.name], !stale.isEmpty {
