@@ -139,24 +139,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: 检查更新：读官网的 latest.json（地址在 Info.plist 的 AAUpdateURL，构建时由 UPDATE_URL 决定；没设就不查）
-    private func checkUpdate() {
+    // completion 只有手动“检查更新”会传：参数是失败原因，nil 表示查到了
+    private func checkUpdate(completion: ((String?) -> Void)? = nil) {
         guard let urlString = Bundle.main.infoDictionary?["AAUpdateURL"] as? String, !urlString.isEmpty,
-              let url = URL(string: urlString) else { return }
+              let url = URL(string: urlString) else { completion?("这个版本没有配置更新地址。"); return }
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 15
-        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
-            guard let self = self, let data = data,
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
+            guard let self = self else { return }
+            guard let data = data,
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let version = obj["version"] as? String else { return }
+                  let version = obj["version"] as? String else {
+                DispatchQueue.main.async { completion?(error?.localizedDescription ?? "官网返回的版本信息读不懂。") }
+                return
+            }
             DispatchQueue.main.async {
                 self.latestVersion = version
                 self.latestURL = (obj["url"] as? String) ?? ""
                 self.latestTgzURL = (obj["tgz_url"] as? String) ?? ""
                 self.latestTgzSHA = ((obj["tgz_sha256"] as? String) ?? "").lowercased()
                 self.render()
+                completion?(nil)
             }
         }.resume()
+    }
+    // 菜单里的“检查更新”：立即查一次并弹窗说结果
+    @objc private func checkUpdateManually() {
+        guard !busy else { return }
+        log("用户点击：检查更新")
+        checkUpdate { [weak self] failure in
+            guard let self = self else { return }
+            let alert = NSAlert()
+            alert.addButton(withTitle: "好")
+            if let failure = failure {
+                alert.messageText = "检查更新失败"
+                alert.informativeText = failure
+                alert.alertStyle = .warning
+            } else if self.updateAvailable {
+                alert.messageText = "发现新版本 \(self.latestVersion)"
+                alert.informativeText = "当前是 \(appVersion)。更新会自动下载、校验并替换应用，然后重新打开，几秒钟完成。"
+                alert.buttons[0].title = "现在更新"
+                alert.addButton(withTitle: "稍后")
+            } else {
+                alert.messageText = "已是最新版本"
+                alert.informativeText = "\(appName) \(appVersion)"
+            }
+            NSApp.activate(ignoringOtherApps: true)
+            let response = alert.runModal()
+            if failure == nil && self.updateAvailable && response == .alertFirstButtonReturn { self.openUpdate() }
+        }
     }
     private var updateAvailable: Bool {
         guard !latestVersion.isEmpty else { return false }
@@ -610,6 +642,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         renderSection(claude, toApi: #selector(claudeToApi), configure: #selector(configureClaude))
         menu.addItem(.separator())
         add("刷新状态", #selector(refresh), enabled: !busy)
+        add("检查更新", #selector(checkUpdateManually), enabled: !busy)
         add("打开备份文件夹", #selector(openBackups))
         let login = add("开机自动启动", #selector(toggleLogin))
         login.state = loginEnabled ? .on : .off
