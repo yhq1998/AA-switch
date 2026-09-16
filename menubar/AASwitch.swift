@@ -645,16 +645,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let login = add("开机自动启动", #selector(toggleLogin))
         login.state = loginEnabled ? .on : .off
         menu.addItem(.separator())
-        let versions = products.compactMap { p -> String? in
-            guard let v = scriptVersion[p.name], !v.isEmpty else { return nil }
-            return "\(p.resource) \(v)"
-        }
         if busy && busyProduct.isEmpty {
             add(busyText, enabled: false)
         } else if updateAvailable {
             add(latestTgzURL.isEmpty ? "有新版本 \(latestVersion)，点击下载…" : "有新版本 \(latestVersion)，点击更新…", #selector(openUpdate))
         }
-        add("\(appName) \(appVersion)" + (versions.isEmpty ? "" : " · " + versions.joined(separator: " · ")), enabled: false)
+        add("\(appName) \(appVersion)", enabled: false)
         add("退出", #selector(quit))
     }
 
@@ -741,11 +737,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         more.addItem(item("打开备份文件夹", backups))
         let details = info.filter { !isWarning($0) && $0.key != "模式" && !Self.urlKeys.contains($0.key) }
-        if !details.isEmpty || !loaded {
-            more.addItem(.separator())
-            if !loaded { more.addItem(item("正在读取状态…", nil, enabled: false)) }
-            for l in details { more.addItem(item(l.key + (l.value.isEmpty ? "" : "：" + l.value), nil, enabled: false)) }
-        }
+        more.addItem(.separator())
+        if !loaded { more.addItem(item("正在读取状态…", nil, enabled: false)) }
+        for l in details { more.addItem(item(l.key + (l.value.isEmpty ? "" : "：" + l.value), nil, enabled: false)) }
+        if let v = scriptVersion[p.name], !v.isEmpty { more.addItem(item("脚本：\(p.resource) \(v)", nil, enabled: false)) }   // 排查问题时看
         let moreItem = NSMenuItem(title: "更多", action: nil, keyEquivalent: "")
         moreItem.submenu = more
         menu.addItem(moreItem)
