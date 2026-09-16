@@ -28,7 +28,7 @@
 # 依赖：macOS 自带的 bash、osascript（用 JavaScript 读写 JSON）、security、curl，不需要 Python。
 # 配置：~/.claude/claude-mode.conf 保存地址和请求头；key 只存在 macOS 钥匙串（条目名 codex-mode:域名，与 codex-mode
 #   共用，同一网关只需配一次 key）。首次运行若没配过地址，会从 ~/.codex/codex-mode.conf 的地址推断（去掉末尾 /v1）。
-# 备份：每次写 settings.json 之前先复制到 ~/.claude/claude-mode-backups/<时间>/。
+# 备份：每次写 settings.json 之前先复制到 ~/.claude/claude-mode-backups/<时间>/，只留最近 20 次。
 # 环境变量：CLAUDE_CONFIG_DIR（Claude Code 的配置目录，默认 ~/.claude）、CODEX_HOME（推断地址时读 codex-mode.conf）、
 #   CLAUDE_MODE_NONINTERACTIVE=1（需要输入时直接报错，供图形界面调用）、CLAUDE_MODE_NO_REOPEN=1（切桌面模式时只退出不重开）、
 #   CLAUDE_DESKTOP_DATA_DIR（桌面应用数据目录，默认 ~/Library/Application Support/Claude，测试用）。
@@ -38,7 +38,7 @@
 #   非交互配置：CLAUDE_MODE_BASE_URL、CLAUDE_MODE_HEADERS（名称=值，逗号分隔）、CLAUDE_MODE_KEY_STDIN=1（从标准输入读
 #   key，可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。
 set -eu
-CLAUDE_MODE_VERSION="1.2.1"
+CLAUDE_MODE_VERSION="1.2.2"
 
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS="$CLAUDE_HOME/settings.json"
@@ -140,9 +140,17 @@ EOF
 env_field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -n1; }
 read_env() { ENVJSON="$(json_env get 2>/dev/null)" || die "读取 ${SETTINGS} 失败（文件不是合法的 JSON？请修好或删掉它再试）。"; }
 current_mode() { read_env; if [ -n "$(env_field "$ENVJSON" base_url)" ]; then echo api; else echo account; fi; }
+# 备份只留最近 20 次切换的和最近 3 份旧脚本，再老的删掉，免得越积越多
+prune_backups() {
+  local root="${BK%/*}" n
+  [ -d "$root" ] || return 0
+  n=0; ls -1d "$root"/[0-9]*-[0-9]* 2>/dev/null | sort -r | while IFS= read -r d; do n=$((n+1)); [ "$n" -gt 20 ] && rm -rf "$d"; done
+  n=0; ls -1 "$root"/*.old-* 2>/dev/null | sort -r | while IFS= read -r f; do n=$((n+1)); [ "$n" -gt 3 ] && rm -f "$f"; done
+  return 0
+}
 backup_settings() {
   [ -f "$SETTINGS" ] || return 0
-  mkdir -p "$BK"; cp -p "$SETTINGS" "$BK/settings.json"
+  mkdir -p "$BK"; cp -p "$SETTINGS" "$BK/settings.json"; prune_backups
 }
 
 # ---------- 账号登录态（只读，不改） ----------
@@ -318,7 +326,7 @@ backup_desktop() {
   mkdir -p "$BK/desktop"
   [ -f "$DESKTOP_CONF" ] && cp -p "$DESKTOP_CONF" "$BK/desktop/"
   [ -d "$DESKTOP_LIB" ] && cp -Rp "$DESKTOP_LIB" "$BK/desktop/configLibrary"
-  return 0
+  prune_backups
 }
 mode_desktop_gateway() {
   desktop_installed || die "这台电脑上没有找到 ${DESKTOP_APP}.app。"

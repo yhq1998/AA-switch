@@ -170,11 +170,11 @@ UPDATE_URL=https://aaswitch.example.com/download/latest.json \
 | `~/.codex/codex-mode.conf` | 地址、请求头、provider 名（不含 key） |
 | macOS 钥匙串 `codex-mode:<域名>` | API key。首次切 API 时依次尝试：这个条目 → Codex 当前正在用的 key → 旧版脚本的钥匙串条目 → 手动输入 |
 | `~/.codex/codex-mode-auth/chatgpt.json` | 上次的 ChatGPT 登录态，切回账号模式时恢复 |
-| `~/.codex/codex-mode-backups/` | 每次切换的备份（config.toml、auth.json、被改的会话、数据库快照）、旧版脚本 |
+| `~/.codex/codex-mode-backups/` | 每次切换的备份（config.toml、auth.json、被改的会话、数据库快照，只留最近 20 次）、旧版脚本（留 3 份） |
 | `~/.codex/codex-mode-menubar.log` | 菜单栏工具的日志 |
 | `~/.claude/claude-mode` | Claude Code 的切换脚本（由 App 安装，或 setup.sh 安装） |
 | `~/.claude/claude-mode.conf` | Claude Code 用的网关地址、请求头（不含 key） |
-| `~/.claude/claude-mode-backups/` | 每次改 settings.json 前的备份、旧版脚本 |
+| `~/.claude/claude-mode-backups/` | 每次改 settings.json 和桌面配置前的备份（只留最近 20 次）、旧版脚本（留 3 份） |
 | `~/Library/LaunchAgents/<BUNDLE_ID>.plist` | 开机自启（在菜单里勾选后生成） |
 
 ## 环境变量（脚本）

@@ -54,7 +54,7 @@ AA Switch 住在 Mac 的菜单栏里，点开就能看到 Codex 和 Claude Code 
 
 - 如果终端或 IDE 里也开着 Codex，先把它们关掉。AA Switch 会提醒你。
 - 切回账号后如果 Codex 让你登录，只是登录态过期了，登一次就好。
-- 每次切换的备份都在 `~/.codex/codex-mode-backups` 和 `~/.claude/claude-mode-backups`，菜单里的 **打开备份文件夹** 可以直达。
+- 每次切换前的备份在 `~/.codex/codex-mode-backups` 和 `~/.claude/claude-mode-backups`（只留最近 20 次），各自"更多"里的 **打开备份文件夹** 可以直达。
 - Claude Code 走 API 时，依赖 Claude 账号的功能（发布 Artifact、云端会话、/schedule、connectors）暂时不可用，切回账号就恢复。
 - Claude Code 的开关同时管终端 / IDE 插件和 Claude 桌面应用的 Code 标签。桌面应用启动 Code 会话时会强制使用自己的登录凭据，所以切到 API 时 AA Switch 会把整个桌面应用切到第三方推理模式并重启它，会话列表自动同步；API 模式下桌面应用的普通聊天不可用，切回账号即恢复。
 

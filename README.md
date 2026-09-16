@@ -54,7 +54,7 @@ Turn on **Launch at login** in the menu and AA Switch is always there.
 
 - If Codex is also running in a terminal or an IDE, close those first. AA Switch will remind you.
 - If Codex asks you to sign in after switching back to your account, your session simply expired. Sign in once and you're set.
-- Backups from every switch are kept in `~/.codex/codex-mode-backups` and `~/.claude/claude-mode-backups`. **Open backups** in the menu takes you there.
+- Backups taken before every switch are kept in `~/.codex/codex-mode-backups` and `~/.claude/claude-mode-backups` (the latest 20). **Open backups** under each product's **More** menu takes you there.
 - While Claude Code is on API, features that need your Claude account (publishing Artifacts, cloud sessions, /schedule, connectors) are unavailable until you switch back.
 - The Claude Code switch covers both the terminal / IDE extensions and the Claude desktop app's Code tab. The desktop app forces its own login credential onto the Code sessions it starts, so switching to API also moves the whole desktop app into its third-party inference mode and restarts it, syncing the session list across. In API mode the desktop app's regular Chat is unavailable; switching back to the account restores it.
 

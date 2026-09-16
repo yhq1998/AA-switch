@@ -30,7 +30,7 @@
 #   非交互配置：CODEX_MODE_BASE_URL、CODEX_MODE_HEADERS（名称=值，逗号分隔）、CODEX_MODE_KEY_STDIN=1（从标准输入读 key，
 #   可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。
 set -eu
-CODEX_MODE_VERSION="2.2.0"
+CODEX_MODE_VERSION="2.2.1"
 
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CFG="$CODEX_HOME/config.toml"
@@ -310,9 +310,18 @@ check_key() {  # check_key URL KEY：登录前先用 key 探测地址，明确�
   esac
 }
 
+# 备份只留最近 20 次切换的和最近 3 份旧脚本，再老的删掉，免得越积越多
+prune_backups() {
+  local root="${BK%/*}" n
+  [ -d "$root" ] || return 0
+  n=0; ls -1d "$root"/[0-9]*-[0-9]* 2>/dev/null | sort -r | while IFS= read -r d; do n=$((n+1)); [ "$n" -gt 20 ] && rm -rf "$d"; done
+  n=0; ls -1 "$root"/*.old-* 2>/dev/null | sort -r | while IFS= read -r f; do n=$((n+1)); [ "$n" -gt 3 ] && rm -f "$f"; done
+  return 0
+}
+
 # ---------- 一次切换的公共部分：备份 → 规划 → 写配置 → 统一会话 → 校验 ----------
 prepare_switch() {  # prepare_switch api|chatgpt
-  mkdir -p "$BK"
+  mkdir -p "$BK"; prune_backups
   [ -f "$CFG" ] && backup_file "$CFG"
   [ -f "$AUTH_FILE" ] && backup_file "$AUTH_FILE"   # 登录态也备份，回滚时一起恢复
   stash_chatgpt_auth

@@ -566,12 +566,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     private func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
-    @objc private func openBackups() {
-        for p in products.reversed() {   // 两个备份目录都打开，Codex 的窗口在前
-            guard mode[p.name] != "absent" else { continue }
-            try? FileManager.default.createDirectory(atPath: p.backups, withIntermediateDirectories: true)
-            NSWorkspace.shared.open(URL(fileURLWithPath: p.backups))
-        }
+    @objc private func openCodexBackups() { openBackups(codex) }
+    @objc private func openClaudeBackups() { openBackups(claude) }
+    private func openBackups(_ p: Product) {   // 脚本每次改配置前的备份（只留最近 20 次），出问题时手动找回用
+        try? FileManager.default.createDirectory(atPath: p.backups, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(URL(fileURLWithPath: p.backups))
     }
 
     // MARK: 开机自启（LaunchAgent，只写/删 plist，下次登录生效）
@@ -637,13 +636,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         needsRender = false
         updateIcon()
         menu.removeAllItems()
-        renderSection(codex, toApi: #selector(codexToApi), configure: #selector(configureCodex))
+        renderSection(codex, toApi: #selector(codexToApi), configure: #selector(configureCodex), backups: #selector(openCodexBackups))
         menu.addItem(.separator())
-        renderSection(claude, toApi: #selector(claudeToApi), configure: #selector(configureClaude))
+        renderSection(claude, toApi: #selector(claudeToApi), configure: #selector(configureClaude), backups: #selector(openClaudeBackups))
         menu.addItem(.separator())
         add("刷新状态", #selector(refresh), enabled: !busy)
         add("检查更新", #selector(checkUpdateManually), enabled: !busy)
-        add("打开备份文件夹", #selector(openBackups))
         let login = add("开机自动启动", #selector(toggleLogin))
         login.state = loginEnabled ? .on : .off
         menu.addItem(.separator())
@@ -675,7 +673,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // 一个产品的分组：带产品图标的标题、一行“账号 ⟷ API”开关（Claude 的开关同时管命令行和桌面应用）、小字的 API 地址、只在异常时出现的提示行；
     // 配置、重新应用和正常态的详细信息都收进“更多”子菜单，正常时不占地方
-    private func renderSection(_ p: Product, toApi: Selector, configure: Selector) {
+    private func renderSection(_ p: Product, toApi: Selector, configure: Selector, backups: Selector) {
         let m = mode[p.name] ?? "unknown"
         let header = add(p.name, enabled: false)
         header.attributedTitle = NSAttributedString(string: p.name, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
@@ -741,6 +739,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let claudeDesktop = p.resource == "claude-mode" && desktopMode == "gateway"
             more.addItem(item(p.resource == "codex-mode" ? "重新应用 API 配置并重启 Codex" : (claudeDesktop ? "重新应用 API 配置并重启 Claude 桌面应用" : "重新应用 API 配置"), toApi))
         }
+        more.addItem(item("打开备份文件夹", backups))
         let details = info.filter { !isWarning($0) && $0.key != "模式" && !Self.urlKeys.contains($0.key) }
         if !details.isEmpty || !loaded {
             more.addItem(.separator())
