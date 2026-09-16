@@ -4,7 +4,8 @@
 # 可选：
 #   VITE_DOWNLOAD_URL=https://aaswitch.example.com/download/AA-Switch.dmg   官网下载按钮指向的地址
 #   DMG=../menubar/dist/AA\ Switch.dmg                                       一起上传的安装包（默认这个路径，不存在则跳过）
-# 会顺带生成 download/latest.json（版本号、日期、地址、sha256），官网在下载按钮下显示版本，App 用它检查更新。
+# 会顺带上传 AASwitch.app.tar.gz 并生成 download/latest.json（版本号、日期、dmg 和 tar.gz 的地址与 sha256），
+# 官网在下载按钮下显示版本，App 用它检查更新并在应用内自动更新。
 set -eu
 cd "$(dirname "$0")"
 [ -n "${DEPLOY_TARGET:-}" ] || { echo "请设置 DEPLOY_TARGET=用户@服务器:/网站目录" >&2; exit 1; }
@@ -18,10 +19,13 @@ if [ -f "$DMG" ]; then
   # latest.json：官网显示当前版本，App 用它检查更新（版本号从同目录的 AASwitch.app.tar.gz 里的 Info.plist 读）
   TGZ="$(dirname "$DMG")/AASwitch.app.tar.gz"
   if [ -f "$TGZ" ]; then
+    cp "$TGZ" dist/download/AASwitch.app.tar.gz   # App 应用内更新下载的就是这个包（也供 setup.sh 用）
     VER="$(tar -xzOf "$TGZ" "AA Switch.app/Contents/Info.plist" | plutil -extract CFBundleShortVersionString raw -o - - 2>/dev/null || true)"
     if [ -n "$VER" ]; then
-      printf '{\n  "version": "%s",\n  "date": "%s",\n  "url": "%s",\n  "sha256": "%s"\n}\n' \
-        "$VER" "$(date +%Y-%m-%d)" "${VITE_DOWNLOAD_URL:-}" "$(shasum -a 256 "$DMG" | cut -d' ' -f1)" > dist/download/latest.json
+      DL_DIR="${VITE_DOWNLOAD_URL%/*}"
+      printf '{\n  "version": "%s",\n  "date": "%s",\n  "url": "%s",\n  "sha256": "%s",\n  "tgz_url": "%s",\n  "tgz_sha256": "%s"\n}\n' \
+        "$VER" "$(date +%Y-%m-%d)" "${VITE_DOWNLOAD_URL:-}" "$(shasum -a 256 "$DMG" | cut -d' ' -f1)" \
+        "${VITE_DOWNLOAD_URL:+$DL_DIR/AASwitch.app.tar.gz}" "$(shasum -a 256 "$TGZ" | cut -d' ' -f1)" > dist/download/latest.json
       echo "· latest.json：$VER"
     fi
   fi

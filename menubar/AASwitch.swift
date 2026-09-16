@@ -2,6 +2,7 @@
 // 所有切换逻辑都在两个脚本里：~/.codex/codex-mode（Codex）和 ~/.claude/claude-mode（Claude Code），
 // 本程序只负责安装脚本、调用和展示。
 import AppKit
+import CryptoKit
 import Foundation
 
 let bundleID = Bundle.main.bundleIdentifier ?? "local.aaswitch"
@@ -108,7 +109,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var mode: [String: String] = [:]            // codex: api | chatgpt | none | unknown | missing；claude: api | account | absent | unknown | missing
     private var desktopMode = "unknown"                 // Claude 桌面应用：gateway | account | absent | unknown
     private var latestVersion = ""                      // 官网 latest.json 里的版本号（空 = 没查到）
-    private var latestURL = ""
+    private var latestURL = ""                          // 下载页 / dmg 地址（应用内更新失败时打开）
+    private var latestTgzURL = "", latestTgzSHA = ""    // 应用内更新用的 AASwitch.app.tar.gz 及其 sha256
     private var busy = false
     private var busyText = ""
     private var busyProduct = ""                        // 正在切换的产品名
@@ -150,6 +152,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 self.latestVersion = version
                 self.latestURL = (obj["url"] as? String) ?? ""
+                self.latestTgzURL = (obj["tgz_url"] as? String) ?? ""
+                self.latestTgzSHA = ((obj["tgz_sha256"] as? String) ?? "").lowercased()
                 self.render()
             }
         }.resume()
@@ -159,8 +163,101 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let parts = { (s: String) in s.split(separator: ".").map { Int($0) ?? 0 } }
         return parts(appVersion).lexicographicallyPrecedes(parts(latestVersion))
     }
-    @objc private func openUpdate() {
+    private func openDownloadPage() {
         if let url = URL(string: latestURL.isEmpty ? "https://github.com/yhq1998/AA-switch/releases/latest" : latestURL) { NSWorkspace.shared.open(url) }
+    }
+    // 应用内更新：下载官网的 AASwitch.app.tar.gz，校验 sha256、签名和 Team ID，换掉自己再重新打开；
+    // 任何一步不对就不动现有安装，改为打开下载页
+    @objc private func openUpdate() {
+        guard !busy else { return }
+        guard !latestTgzURL.isEmpty, !latestTgzSHA.isEmpty, let url = URL(string: latestTgzURL) else { openDownloadPage(); return }
+        log("用户点击：更新到 \(latestVersion)")
+        busy = true
+        busyProduct = ""
+        busyText = "正在下载 \(appName) \(latestVersion)…"
+        render()
+        URLSession.shared.downloadTask(with: url) { [weak self] tmp, _, error in
+            guard let self = self else { return }
+            var failure = error?.localizedDescription
+            var launcher: URL?
+            if failure == nil, let tmp = tmp {
+                do { launcher = try self.stageUpdate(tmp) } catch { failure = error.localizedDescription }
+            }
+            DispatchQueue.main.async {
+                self.busy = false
+                if let failure = failure {
+                    self.log("更新失败：\(failure)")
+                    self.render()
+                    let alert = NSAlert()
+                    alert.messageText = "更新失败"
+                    alert.informativeText = failure + "\n\n现有安装没有改动。"
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "好")
+                    alert.addButton(withTitle: "打开下载页")
+                    NSApp.activate(ignoringOtherApps: true)
+                    if alert.runModal() == .alertSecondButtonReturn { self.openDownloadPage() }
+                    return
+                }
+                guard let launcher = launcher else { return }
+                self.log("更新包校验通过，退出并由 \(launcher.path) 完成替换")
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/bin/bash")
+                p.arguments = [launcher.path]
+                try? p.run()
+                NSApp.terminate(nil)
+            }
+        }.resume()
+    }
+    private struct UpdateError: LocalizedError { let errorDescription: String? }
+    private func shell(_ cmd: String, _ args: [String]) -> (Int32, String) {
+        let p = Process(); p.executableURL = URL(fileURLWithPath: cmd); p.arguments = args
+        let out = Pipe(); p.standardOutput = out; p.standardError = out
+        do { try p.run() } catch { return (-1, error.localizedDescription) }
+        let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        return (p.terminationStatus, text)
+    }
+    // 校验并解包到临时目录，返回负责替换和重开的脚本；抛错则什么都没改
+    private func stageUpdate(_ tmp: URL) throws -> URL {
+        let data = try Data(contentsOf: tmp)
+        let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard sha == latestTgzSHA else { throw UpdateError(errorDescription: "下载的文件校验值不对（可能下载不完整或被篡改）。") }
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("aaswitch-update-\(ProcessInfo.processInfo.processIdentifier)")
+        try? FileManager.default.removeItem(at: work)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        let (tarCode, tarOut) = shell("/usr/bin/tar", ["-xzf", tmp.path, "-C", work.path])
+        guard tarCode == 0 else { throw UpdateError(errorDescription: "解包失败：" + tarOut) }
+        guard let newApp = try FileManager.default.contentsOfDirectory(at: work, includingPropertiesForKeys: nil).first(where: { $0.pathExtension == "app" }) else {
+            throw UpdateError(errorDescription: "更新包里没有找到应用。")
+        }
+        let (verifyCode, verifyOut) = shell("/usr/bin/codesign", ["--verify", "--deep", "--strict", newApp.path])
+        guard verifyCode == 0 else { throw UpdateError(errorDescription: "新版本的签名校验不通过：" + verifyOut) }
+        func team(_ path: String) -> String {
+            let (_, out) = shell("/usr/bin/codesign", ["-dv", "--verbose=2", path])
+            return out.split(separator: "\n").first { $0.hasPrefix("TeamIdentifier=") }.map { String($0.dropFirst("TeamIdentifier=".count)) } ?? ""
+        }
+        let mine = team(Bundle.main.bundlePath), theirs = team(newApp.path)
+        if !mine.isEmpty && mine != "not set" && theirs != mine {
+            throw UpdateError(errorDescription: "新版本的签名者（\(theirs)）和当前安装（\(mine)）不一致，拒绝安装。")
+        }
+        let newVersion = (Bundle(url: newApp)?.infoDictionary?["CFBundleShortVersionString"] as? String) ?? ""
+        let parts = { (s: String) in s.split(separator: ".").map { Int($0) ?? 0 } }
+        guard parts(appVersion).lexicographicallyPrecedes(parts(newVersion)) else { throw UpdateError(errorDescription: "更新包的版本（\(newVersion)）不比当前（\(appVersion)）新。") }
+        let target = Bundle.main.bundlePath
+        guard FileManager.default.isWritableFile(atPath: (target as NSString).deletingLastPathComponent) else {
+            throw UpdateError(errorDescription: "没有权限替换 \(target)，请手动下载安装。")
+        }
+        // 等本进程退出后再替换，然后重新打开；脚本自己在后台跑，不依赖本进程
+        let script = work.appendingPathComponent("install.sh")
+        try """
+        #!/bin/bash
+        for _ in $(seq 1 150); do kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null || break; sleep 0.2; done
+        rm -rf \(quote(target)) && mv \(quote(newApp.path)) \(quote(target)) || exit 1
+        xattr -dr com.apple.quarantine \(quote(target)) 2>/dev/null
+        open -a \(quote(target))
+        rm -rf \(quote(work.path))
+        """.write(to: script, atomically: true, encoding: .utf8)
+        return script
     }
 
     // 菜单栏程序没有主菜单，⌘C / ⌘V / ⌘A 这类快捷键要靠“编辑”菜单转发；装一个不可见的即可
@@ -521,7 +618,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let v = scriptVersion[p.name], !v.isEmpty else { return nil }
             return "\(p.resource) \(v)"
         }
-        if updateAvailable { add("有新版本 \(latestVersion)，点击下载…", #selector(openUpdate)) }
+        if busy && busyProduct.isEmpty {
+            add(busyText, enabled: false)
+        } else if updateAvailable {
+            add(latestTgzURL.isEmpty ? "有新版本 \(latestVersion)，点击下载…" : "有新版本 \(latestVersion)，点击更新…", #selector(openUpdate))
+        }
         add("\(appName) \(appVersion)" + (versions.isEmpty ? "" : " · " + versions.joined(separator: " · ")), enabled: false)
         add("退出", #selector(quit))
     }
