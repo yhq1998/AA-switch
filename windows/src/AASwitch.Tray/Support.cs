@@ -12,6 +12,17 @@ static class AppInfo
     public static string DataDir { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Name);
     public static string ExePath => Environment.ProcessPath ?? Application.ExecutablePath;
 
+    /// <summary>官网 latest.json 的地址：构建时由 UPDATE_URL 写进程序集（见 build.sh）；环境变量 AASWITCH_UPDATE_URL 可覆盖，测试用。没设就不检查更新。</summary>
+    public static string UpdateUrl
+    {
+        get
+        {
+            var env = Environment.GetEnvironmentVariable("AASWITCH_UPDATE_URL");
+            if (!string.IsNullOrWhiteSpace(env)) return env;
+            return Assembly.GetExecutingAssembly().GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "UpdateUrl")?.Value ?? "";
+        }
+    }
+
     public static Icon LoadIcon(string resource, int size)
     {
         using var s = Assembly.GetExecutingAssembly().GetManifestResourceStream(resource) ?? throw new InvalidOperationException(resource);
@@ -74,5 +85,33 @@ static class Autostart
             if (value) k.SetValue(AppInfo.Name, $"\"{AppInfo.ExePath}\"");
             else k.DeleteValue(AppInfo.Name, throwOnMissingValue: false);
         }
+    }
+}
+
+/// <summary>
+/// 应用内更新的最后一步：用下载好的新 exe 换掉自己。Windows 允许给正在运行的 exe 改名，所以先把自己改名成 .old，
+/// 再把新的放到原位置；第二步失败就把名字改回来，现有安装不受影响。.old 在下次启动时删掉。
+/// </summary>
+static class SelfReplace
+{
+    static string OldPath => AppInfo.ExePath + ".old";
+
+    public static void Swap(string newExe)
+    {
+        var exe = AppInfo.ExePath;
+        try { File.Delete(OldPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        try { File.Move(exe, OldPath, overwrite: true); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { throw new SwitchException($"没有权限替换 {exe}：{e.Message}"); }
+        try { File.Move(newExe, exe); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            File.Move(OldPath, exe);
+            throw new SwitchException($"放入新版本失败：{e.Message}");
+        }
+    }
+
+    public static void CleanUp()
+    {
+        try { File.Delete(OldPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 }

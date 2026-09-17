@@ -20,6 +20,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- 官网 latest.json 的地址，发布构建时传 -p:UpdateUrl=…；不传就不检查更新 -->
+    <AssemblyMetadata Include="UpdateUrl" Value="$(UpdateUrl)" />
     <ProjectReference Include="..\AASwitch.Core\AASwitch.Core.csproj" />
     <EmbeddedResource Include="..\..\icon\tray.ico" LogicalName="tray.ico" />
     <EmbeddedResource Include="..\..\icon\app.ico" LogicalName="app.ico" />

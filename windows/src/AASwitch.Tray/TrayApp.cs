@@ -22,6 +22,8 @@ sealed class TrayApp : ApplicationContext
     bool _busy;
     string _busyProduct = "", _busyText = "";
     bool _onboardingShown;
+    Updater.Release? _latest;
+    readonly System.Windows.Forms.Timer _updateTimer = new() { Interval = 6 * 60 * 60 * 1000 };   // 每 6 小时查一次
     bool _headless;          // --click 自测模式：不弹任何窗口，出错只记下来
     string? _headlessError;
 
@@ -38,6 +40,10 @@ sealed class TrayApp : ApplicationContext
         Log.Write($"启动 {AppInfo.Name} {AppInfo.Version}（{AppInfo.ExePath}）");
         ReadModes(); Rebuild();
         RefreshStatusAsync(thenOnUi: MaybeShowOnboarding);
+        SelfReplace.CleanUp();
+        _updateTimer.Tick += async (_, _) => await CheckUpdateAsync();
+        _updateTimer.Start();
+        _ = CheckUpdateAsync();
     }
 
     public static List<IProduct> CreateProducts(Action<string> say)
@@ -118,11 +124,14 @@ sealed class TrayApp : ApplicationContext
         _menu.Items.Clear();
         foreach (var p in _products) { AddSection(p); _menu.Items.Add(new ToolStripSeparator()); }
         _menu.Items.Add(Item("刷新状态", () => { ReadModes(); Rebuild(); RefreshStatusAsync(); }, !_busy));
+        _menu.Items.Add(Item("检查更新", () => _ = CheckUpdateManuallyAsync(), !_busy));
         _menu.Items.Add(Item("导出诊断信息…", ExportDiagnostics, !_busy));
         var login = Item("开机自动启动", () => { Autostart.Enabled = !Autostart.Enabled; Log.Write("开机自动启动：" + Autostart.Enabled); });
         login.Checked = Autostart.Enabled;
         _menu.Items.Add(login);
         _menu.Items.Add(new ToolStripSeparator());
+        if (_busy && _busyProduct.Length == 0) _menu.Items.Add(Item(_busyText, null));
+        else if (UpdateAvailable) _menu.Items.Add(Item($"有新版本 {_latest!.Version}，点击更新…", () => _ = ApplyUpdateAsync()));
         _menu.Items.Add(Label($"{AppInfo.Name} {AppInfo.Version}", _small, SystemColors.GrayText));
         _menu.Items.Add(Item("退出", () => { _icon.Visible = false; ExitThread(); }));
         _menu.ResumeLayout();
@@ -212,6 +221,74 @@ sealed class TrayApp : ApplicationContext
         MessageBox.Show($"{p.Name} 当前是{p.AccountTitle}模式，新地址会在下次切换到 API 时使用。", "已保存", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
+    // ---------- 检查更新：读官网的 latest.json；新版本下载、校验后换掉自己再重新打开，任何一步不对就不动现有安装 ----------
+    bool UpdateAvailable => _latest is not null && Updater.IsNewer(_latest.Version, AppInfo.Version);
+
+    /// <summary>返回失败原因，null 表示查到了（不一定有新版）。</summary>
+    async Task<string?> CheckUpdateAsync()
+    {
+        if (AppInfo.UpdateUrl.Length == 0) return "这个版本没有配置更新地址。";
+        try
+        {
+            _latest = await Task.Run(() => Updater.CheckAsync(AppInfo.UpdateUrl));
+            if (UpdateAvailable) { Log.Write($"发现新版本 {_latest!.Version}（当前 {AppInfo.Version}）"); Rebuild(); }
+            return null;
+        }
+        catch (SwitchException e) { Log.Write("检查更新失败：" + e.Message); return e.Message; }
+    }
+
+    async Task CheckUpdateManuallyAsync()
+    {
+        if (_busy) return;
+        Log.Write("用户点击：检查更新");
+        var failure = await CheckUpdateAsync();
+        if (failure is not null) MessageBox.Show(failure, "检查更新失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        else if (!UpdateAvailable) MessageBox.Show($"{AppInfo.Name} {AppInfo.Version}", "已是最新版本", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        else if (MessageBox.Show($"当前是 {AppInfo.Version}。更新会自动下载、校验并替换程序，然后重新打开，几十秒完成。\n\n现在更新吗？", $"发现新版本 {_latest!.Version}", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+            await ApplyUpdateAsync();
+    }
+
+    /// <summary>下载、校验、替换。成功后（非自测模式）重新打开新版本并退出；返回失败原因，成功为 null。</summary>
+    public async Task<string?> ApplyUpdateAsync()
+    {
+        if (_busy || _latest is null) return "没有可用的更新";
+        var release = _latest;
+        Log.Write($"更新到 {release.Version}");
+        _busy = true; _busyProduct = ""; _busyText = $"正在下载 {AppInfo.Name} {release.Version}…";
+        UpdateTooltip(); Rebuild();
+        string? failure = null;
+        try
+        {
+            var tmp = Path.Combine(AppInfo.DataDir, "update", $"{AppInfo.Name} {release.Version}.exe");
+            await Task.Run(() => Updater.DownloadAsync(release, AppInfo.UpdateUrl, tmp));
+            SelfReplace.Swap(tmp);
+        }
+        catch (SwitchException e) { failure = e.Message; }
+        _busy = false;
+        UpdateTooltip(); Rebuild();
+        if (failure is not null)
+        {
+            Log.Write("更新失败：" + failure);
+            if (!_headless) MessageBox.Show(failure + "\n\n现有安装没有改动。", "更新失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return failure;
+        }
+        Log.Write("更新包校验通过，已替换程序" + (_headless ? "" : "，重新打开"));
+        if (_headless) return null;
+        Process.Start(new ProcessStartInfo(AppInfo.ExePath, "--after-update") { UseShellExecute = false });
+        _icon.Visible = false;
+        ExitThread();
+        return null;
+    }
+
+    /// <summary>给 CI 自测用：查一次更新，有新版就替换自己（不重新打开）。返回失败原因，成功为 null。</summary>
+    public async Task<string?> UpdateForTestAsync()
+    {
+        _headless = true;
+        var failure = await CheckUpdateAsync();
+        if (failure is not null) return failure;
+        return UpdateAvailable ? await ApplyUpdateAsync() : "没有比当前更新的版本";
+    }
+
     // ---------- 初始设置 ----------
     void MaybeShowOnboarding()
     {
@@ -266,7 +343,7 @@ sealed class TrayApp : ApplicationContext
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { _icon.Dispose(); _menu.Dispose(); _ui.Dispose(); _small.Dispose(); _bold.Dispose(); }
+        if (disposing) { _updateTimer.Dispose(); _icon.Dispose(); _menu.Dispose(); _ui.Dispose(); _small.Dispose(); _bold.Dispose(); }
         base.Dispose(disposing);
     }
 

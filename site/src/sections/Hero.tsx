@@ -8,20 +8,22 @@ const HERO_VIDEO =
 const DOWNLOAD_URL = import.meta.env.VITE_DOWNLOAD_URL || 'https://github.com/yhq1998/AA-switch/releases/latest'
 // 自己托管时保存下来的文件名固定叫“AA Switch.dmg”（同源链接 download 属性才生效，指向 GitHub 时忽略）
 const DOWNLOAD_NAME = import.meta.env.VITE_DOWNLOAD_URL ? 'AA Switch.dmg' : undefined
-// 自己托管 dmg 时，同目录的 latest.json（deploy.sh 生成）记录当前版本，显示在下载按钮下面
+// 自己托管安装包时，同目录的 latest.json（deploy.sh 生成）记录两个平台的当前版本：顶层是 macOS 版，windows 段是 Windows 版
 const LATEST_URL = import.meta.env.VITE_DOWNLOAD_URL ? DOWNLOAD_URL.replace(/[^/]*$/, 'latest.json') : ''
-const NAV: { label: string; href: string; download?: string }[] = [
-  { label: '初衷', href: '#about' },
-  { label: '功能', href: '#features' },
-  { label: '下载', href: DOWNLOAD_URL, download: DOWNLOAD_NAME },
-  { label: '开源', href: 'https://github.com/yhq1998/AA-switch' },
-  { label: '反馈', href: 'https://github.com/yhq1998/AA-switch/issues' },
-]
+type Release = { version: string; date?: string; url?: string }
+type Latest = Release & { windows?: Release }
+type Download = { os: 'mac' | 'windows'; label: string; href: string; filename?: string; release?: Release; note: string }
 const ease = [0.16, 1, 0.3, 1] as const
 const linkStyle = { color: 'rgba(225, 224, 204, 0.8)' }
 
 export default function Hero() {
-  const [latest, setLatest] = useState<{ version: string; date?: string } | null>(null)
+  const [latest, setLatest] = useState<Latest | null>(null)
+  const [onWindows, setOnWindows] = useState(false)
+  // 地址加 ?os=windows / ?os=mac 可以指定平台（预览另一个平台的样子，或者替别的电脑下载）
+  useEffect(() => {
+    const forced = new URLSearchParams(location.search).get('os')
+    setOnWindows(forced ? forced === 'windows' : /Windows/i.test(navigator.userAgent))
+  }, [])
   useEffect(() => {
     if (!LATEST_URL) return
     fetch(LATEST_URL, { cache: 'no-store' })
@@ -29,6 +31,24 @@ export default function Hero() {
       .then((j) => j && typeof j.version === 'string' && setLatest(j))
       .catch(() => {})
   }, [])
+  const mac: Download = {
+    os: 'mac', label: '下载 macOS 版', href: DOWNLOAD_URL, filename: DOWNLOAD_NAME, release: latest ?? undefined,
+    note: 'Intel 和 Apple 芯片均支持 · 需要 macOS 13 或更新',
+  }
+  // Windows 版发布过（latest.json 里有 windows 段）才出现；Windows 访客默认给 Windows 版，另一个平台放在下面的小字链接里
+  const win: Download | null = latest?.windows?.url
+    ? { os: 'windows', label: '下载 Windows 版', href: latest.windows.url, filename: 'AA Switch.exe', release: latest.windows,
+        note: 'Windows 10 / 11（64 位）· 免安装，双击运行 · 若被 SmartScreen 拦下，点“更多信息 → 仍要运行”' }
+    : null
+  const primary = onWindows && win ? win : mac
+  const secondary = primary === mac ? win : mac
+  const NAV: { label: string; href: string; download?: string }[] = [
+    { label: '初衷', href: '#about' },
+    { label: '功能', href: '#features' },
+    { label: '下载', href: primary.href, download: primary.filename },
+    { label: '开源', href: 'https://github.com/yhq1998/AA-switch' },
+    { label: '反馈', href: 'https://github.com/yhq1998/AA-switch/issues' },
+  ]
   return (
     <section className="h-screen bg-black p-4 md:p-6">
       <div className="relative h-full w-full overflow-hidden rounded-2xl md:rounded-[2rem]">
@@ -88,27 +108,36 @@ export default function Hero() {
                 不再为撞顶烦恼。ChatGPT 账号和你自己的 API 随时切换，历史会话一个不丢，登录态自动保留。把注意力还给创作，而不是额度。
               </motion.p>
               <motion.a
-                href={DOWNLOAD_URL}
-                download={DOWNLOAD_NAME}
+                href={primary.href}
+                download={primary.filename}
                 className="group inline-flex w-fit items-center gap-2 rounded-full bg-primary py-1.5 pl-5 pr-1.5 text-sm font-medium text-black transition-all hover:gap-3 sm:text-base"
                 initial={{ y: 20, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ duration: 0.8, delay: 0.7, ease }}
               >
-                下载 macOS 版
+                {primary.label}
                 <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black transition-transform group-hover:scale-110 sm:h-10 sm:w-10">
                   <ArrowRight className="h-4 w-4 text-primary" />
                 </span>
               </motion.a>
-              {latest && (
+              {primary.release && (
                 <motion.p
                   className="text-xs text-primary/50"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ duration: 0.6, delay: 0.9 }}
                 >
-                  当前版本 v{latest.version}
-                  {latest.date ? ` · ${latest.date} 更新` : ''} · Intel 和 Apple 芯片均支持 · 需要 macOS 13 或更新
+                  当前版本 v{primary.release.version}
+                  {primary.release.date ? ` · ${primary.release.date} 更新` : ''} · {primary.note}
+                  {secondary && (
+                    <>
+                      <br />
+                      <a href={secondary.href} download={secondary.filename} className="underline underline-offset-2 transition-colors hover:text-primary">
+                        {secondary.os === 'windows' ? '也有 Windows 版' : '也有 macOS 版'}
+                        {secondary.release ? ` v${secondary.release.version}` : ''}
+                      </a>
+                    </>
+                  )}
                 </motion.p>
               )}
             </div>

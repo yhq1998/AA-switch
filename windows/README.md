@@ -24,8 +24,11 @@ key 的条目名 `codex-mode:域名`（存在 Windows 凭据管理器的“普�
 - [ ] Claude 桌面应用的第三方推理模式、会话列表同步（等 probe 结果确认路径）
 - [x] 托盘程序 `AA Switch.exe`（`src/AASwitch.Tray`，WinForms）：每个产品一行“账号 | API”分段控件、配置表单（规范化地址，用 key 探测网关：401/403 拦下，
       连不上或 404 可坚持保存）、初始设置、开机自启（HKCU 的 Run 项）、导出诊断信息、单实例。菜单该显示什么由 Core 的 `TrayView` 决定，有单元测试。
-      还没有的：检查更新、切换前已打开的终端会话提醒、深色菜单
-- [ ] 自更新、官网下载按钮、deploy.sh
+      还没有的：切换前已打开的终端会话提醒、深色菜单
+- [x] 应用内更新：每 6 小时和手动“检查更新”读官网 latest.json 的 `windows` 段，有新版就下载、校验 sha256、把自己改名成 `.old` 再放入新版并重新打开。
+      没有代码签名，所以只信 https、且下载地址必须和 latest.json 同一个主机
+- [x] 发布：`build.sh` 出发布包，`site/deploy.sh` 顺带上传并写 latest.json 的 `windows` 段，官网按访客系统给下载按钮（见 DEVELOPMENT.md）
+- [ ] 代码签名（没签名的 exe 首次运行会被 SmartScreen 拦一下）、安装包 / 开始菜单快捷方式
 
 ## 开发（macOS 上即可）
 

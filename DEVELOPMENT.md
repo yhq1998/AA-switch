@@ -132,6 +132,31 @@ UPDATE_URL=https://aaswitch.example.com/download/latest.json \
 
 把 `setup.sh`（顶部 `DEFAULT_*` 填好）、`codex-mode.sh`、`AASwitch.app.tar.gz` 放到同一个可下载目录。
 
+### Windows 版
+
+代码在 `windows/`（C# / .NET 10，说明和进度见 [windows/README.md](windows/README.md)），和 macOS 版互不影响、版本号各走各的。在 macOS 上就能交叉编译（`brew install dotnet`）：
+
+```bash
+cd windows
+VERSION=0.2.0 UPDATE_URL=https://aaswitch.example.com/download/latest.json ./build.sh    # 产物在 windows/dist/
+cd ../site
+VITE_DOWNLOAD_URL=https://aaswitch.example.com/download/AA%20Switch.dmg DEPLOY_TARGET=root@服务器IP:/var/www/aaswitch ./deploy.sh
+```
+
+`deploy.sh` 发现 `windows/dist/AA Switch.exe` 就上传到 `/download/AA Switch.exe`，并在 `latest.json` 里写 `windows` 段（版本、日期、地址、sha256）；顶层字段仍是 macOS 版的，
+老版本的 App 只读顶层，不受影响。两个平台可以分开发布：这次没带上安装包的平台，服务器上已有的文件和 `latest.json` 里它的那部分原样保留
+（以线上现有的 `latest.json` 为底合并，rsync 对缺的安装包加 protect）。
+
+官网的下载按钮按访客的系统给：Windows 访客看到“下载 Windows 版”，下面的小字里有另一个平台的链接；`latest.json` 里还没有 `windows` 段时只有 macOS 按钮。
+地址加 `?os=windows` / `?os=mac` 可以指定平台。
+
+Windows 版的应用内更新：启动时和之后每 6 小时读 `latest.json` 的 `windows` 段，比自己新就在菜单底部显示“有新版本，点击更新…”。点了就下载 exe、校验 sha256 和文件头，
+把正在运行的自己改名成 `AA Switch.exe.old`（Windows 允许给运行中的 exe 改名），新的放到原位置，启动新版本后退出，`.old` 下次启动时删掉；任一步失败不动现有安装。
+Windows 版目前没有代码签名，所以只信 https，且下载地址必须和 `latest.json` 同一个主机；首次运行会被 SmartScreen 拦一下（“更多信息 → 仍要运行”）。
+
+验证靠 GitHub Actions（`.github/workflows/windows.yml`，推送 `windows/**` 时触发）：在 windows-latest 上跑单元测试、真 Claude Code / codex + 本地假网关的端到端、
+托盘的切换路径、应用内更新的端到端，再把界面画成 PNG、真实启动一次并截屏，放在 `shots` 产物里。
+
 ### 升级
 
 脚本里有 `CODEX_MODE_VERSION`，AA Switch 启动时发现自带的脚本比已装的新就自动替换（旧的备份到 `~/.codex/codex-mode-backups/`）。发新版时改这个版本号、重新构建、把新 dmg 发给同事覆盖安装即可。

@@ -50,6 +50,11 @@ jobs:
             if ($p.ExitCode -ne 0 -or $mode -ne $want) { Get-Content "$env:LOCALAPPDATA\AA Switch\aa-switch.log"; exit 1 }
           }
           ./out/aaswitch.exe claude api   # 留在 API 模式，让后面的截图里有一组是 API 状态
+      # 应用内更新：再编一个版本号更高的，本机起一个“官网”，让刚才那个版本自己更新自己
+      - name: Self-update end-to-end
+        run: |
+          dotnet publish src/AASwitch.Tray -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -p:Version=9.9.9 -o out-tray-new
+          node e2e/update-e2e.mjs "out-tray/AA Switch.exe" "out-tray-new/AA Switch.exe" 9.9.9
       - name: Render UI to PNG
         run: |
           $p = Start-Process -FilePath "out-tray/AA Switch.exe" -ArgumentList '--render', "$PWD\shots" -Wait -PassThru -RedirectStandardOutput render.log -RedirectStandardError render.err
