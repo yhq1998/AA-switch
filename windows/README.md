@@ -8,6 +8,8 @@ macOS 那边的脚本和 App 不受影响。
 | `src/AASwitch.Core` | 切换逻辑，跨平台（不依赖 Windows API 的部分在 macOS 上也能编译和测试） |
 | `src/AASwitch.Cli` | 命令行 `aaswitch.exe`，验证阶段先用它；以后的托盘程序调用同一套 Core |
 | `tests/AASwitch.Core.Tests` | 单元测试，用临时目录当 home，不碰真实配置 |
+| `src/AASwitch.Tray` | 托盘程序（WinForms，只能在 Windows 上运行；macOS 上靠 `EnableWindowsTargeting` 也能编译）。`--render <目录>` 把界面画成 PNG，`--click <codex\|claude> <api\|account>` 不显示界面走一遍切换，都是给 CI 用的 |
+| `icon/` | `app.ico` / `tray.ico`，由 macOS 版的 SVG 生成（`make-ico.sh`，要在 macOS 上跑），生成物提交进仓库 |
 | `probe.ps1` | 只读的环境探测脚本，用来确认 Windows 上各家工具的数据路径 |
 
 与 macOS 版保持一致的地方：配置文件 `~\.claude\claude-mode.conf`（key=value）、备份目录 `~\.claude\claude-mode-backups\<时间>\`（留 20 次）、
@@ -20,7 +22,9 @@ key 的条目名 `codex-mode:域名`（存在 Windows 凭据管理器的“普�
       ChatGPT 登录态存档与恢复、失败回滚）。与 macOS 的 codex-mode.sh 用同一份数据做过对照，产出一致。切换前要自己关掉 Codex 应用和 codex 进程，
       自动退出 / 重开应用放在下一步
 - [ ] Claude 桌面应用的第三方推理模式、会话列表同步（等 probe 结果确认路径）
-- [ ] 托盘程序、配置表单、开机自启
+- [x] 托盘程序 `AA Switch.exe`（`src/AASwitch.Tray`，WinForms）：每个产品一行“账号 | API”分段控件、配置表单（规范化地址，用 key 探测网关：401/403 拦下，
+      连不上或 404 可坚持保存）、初始设置、开机自启（HKCU 的 Run 项）、导出诊断信息、单实例。菜单该显示什么由 Core 的 `TrayView` 决定，有单元测试。
+      还没有的：检查更新、切换前已打开的终端会话提醒、深色菜单
 - [ ] 自更新、官网下载按钮、deploy.sh
 
 ## 开发（macOS 上即可）
@@ -36,7 +40,8 @@ E2E_ISOLATED=1 node e2e/claude-e2e.mjs out-mac/aaswitch
 E2E_ISOLATED=1 CODEX_BIN=/Applications/ChatGPT.app/Contents/Resources/codex node e2e/codex-e2e.mjs out-mac/aaswitch
 ```
 
-推到 GitHub 后 `.github/workflows/windows.yml` 会在 Windows 机器上跑测试（含真实的凭据管理器读写）并产出 `aaswitch-windows-x64`。
+推到 GitHub 后 `.github/workflows/windows.yml` 会在 Windows 机器上跑测试（含真实的凭据管理器读写）、两个端到端、托盘的 `--click` 和 `--render`，
+再真的启动一次托盘程序并截屏。产物：`aaswitch-windows-x64`（两个 exe）和 `shots`（界面截图 + 探测结果，很小，`gh run download <id> -n shots` 取回来看）。
 
 ## 在 Windows 上验证
 
