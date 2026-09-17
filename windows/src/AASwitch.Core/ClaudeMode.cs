@@ -10,7 +10,7 @@ namespace AASwitch.Core;
 /// </summary>
 public sealed partial class ClaudeMode(AppPaths paths, ISecretStore secrets, Action<string> say, HttpMessageHandler? http = null)
 {
-    public const string Version = "0.1.0";
+    public const string Version = "0.2.0";
     const int KeepBackups = 20;
     static readonly string[] EnvKeys = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CUSTOM_HEADERS"];
 
