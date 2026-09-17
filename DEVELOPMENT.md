@@ -147,8 +147,8 @@ VITE_DOWNLOAD_URL=https://aaswitch.example.com/download/AA%20Switch.dmg DEPLOY_T
 老版本的 App 只读顶层，不受影响。两个平台可以分开发布：这次没带上安装包的平台，服务器上已有的文件和 `latest.json` 里它的那部分原样保留
 （以线上现有的 `latest.json` 为底合并，rsync 对缺的安装包加 protect）。
 
-官网的下载按钮按访客的系统给：Windows 访客看到“下载 Windows 版”，下面的小字里有另一个平台的链接；`latest.json` 里还没有 `windows` 段时只有 macOS 按钮。
-地址加 `?os=windows` / `?os=mac` 可以指定平台。
+官网上两个平台的下载按钮并排，访客自己的系统排在前面；顶部导航的“下载”悬停（触屏上点一下）展开下拉框，可选 macOS 版或 Windows 版。
+`latest.json` 里还没有 `windows` 段时只有 macOS 按钮，“下载”也只是普通链接。地址加 `?os=windows` / `?os=mac` 可以指定哪个平台排在前面。
 
 Windows 版的应用内更新：启动时和之后每 6 小时读 `latest.json` 的 `windows` 段，比自己新就在菜单底部显示“有新版本，点击更新…”。点了就下载 exe、校验 sha256 和文件头，
 把正在运行的自己改名成 `AA Switch.exe.old`（Windows 允许给运行中的 exe 改名），新的放到原位置，启动新版本后退出，`.old` 下次启动时删掉；任一步失败不动现有安装。
