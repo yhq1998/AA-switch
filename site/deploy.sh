@@ -2,7 +2,7 @@
 # 构建官网并上传到你的服务器（rsync over SSH）。用法：
 #   DEPLOY_TARGET=root@1.2.3.4:/var/www/aaswitch ./deploy.sh
 # 可选：
-#   VITE_DOWNLOAD_URL=https://aaswitch.example.com/download/AA-Switch.dmg   官网下载按钮指向的地址
+#   VITE_DOWNLOAD_URL=https://aaswitch.example.com/download/AA%20Switch.dmg   官网下载按钮指向的地址（文件名带空格，URL 里写 %20，浏览器保存时还原成“AA Switch.dmg”）
 #   DMG=../menubar/dist/AA\ Switch.dmg                                       一起上传的安装包（默认这个路径，不存在则跳过）
 # 会顺带上传 AASwitch.app.tar.gz 并生成 download/latest.json（版本号、日期、dmg 和 tar.gz 的地址与 sha256），
 # 官网在下载按钮下显示版本，App 用它检查更新并在应用内自动更新。
@@ -15,7 +15,14 @@ echo "· 构建"
 [ -d node_modules ] || npm install --no-audit --no-fund
 npm run build >/dev/null
 if [ -f "$DMG" ]; then
-  mkdir -p dist/download; cp "$DMG" dist/download/AA-Switch.dmg; echo "· 附带安装包 $(du -h "$DMG" | cut -f1)"
+  mkdir -p dist/download
+  cp "$DMG" "dist/download/AA Switch.dmg"   # 用户下载到的文件名就是这个（带空格）
+  cp "$DMG" dist/download/AA-Switch.dmg     # 2.3.0 及之前的地址，留着让旧链接不失效
+  echo "· 附带安装包 $(du -h "$DMG" | cut -f1)"
+  case "${VITE_DOWNLOAD_URL:-}" in
+    ''|*/AA%20Switch.dmg) ;;
+    *) echo "提示：VITE_DOWNLOAD_URL 应以 /AA%20Switch.dmg 结尾，否则下载到的文件名不是“AA Switch.dmg”" >&2 ;;
+  esac
   # latest.json：官网显示当前版本，App 用它检查更新（版本号从同目录的 AASwitch.app.tar.gz 里的 Info.plist 读）
   TGZ="$(dirname "$DMG")/AASwitch.app.tar.gz"
   if [ -f "$TGZ" ]; then

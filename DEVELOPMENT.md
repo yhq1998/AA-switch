@@ -68,11 +68,11 @@ npm run build    # 产物在 site/dist/
 
    然后 `sudo systemctl reload caddy`。
 
-4. **本机一条命令构建并上传**（会顺带把 `menubar/dist/AA Switch.dmg` 传到 `/download/AA-Switch.dmg`）：
+4. **本机一条命令构建并上传**（会顺带把 `menubar/dist/AA Switch.dmg` 传到 `/download/AA Switch.dmg`，URL 里写成 `AA%20Switch.dmg`）：
 
    ```bash
    cd site
-   VITE_DOWNLOAD_URL=https://aaswitch.example.com/download/AA-Switch.dmg \
+   VITE_DOWNLOAD_URL=https://aaswitch.example.com/download/AA%20Switch.dmg \
    DEPLOY_TARGET=root@服务器IP:/var/www/aaswitch \
    ./deploy.sh
    ```
@@ -122,7 +122,7 @@ UPDATE_URL=https://aaswitch.example.com/download/latest.json \
 
 产出 `menubar/dist/AA Switch.dmg`（已签名、已公证、已装订）和 `AASwitch.app.tar.gz`。
 
-**版本号与更新提示。** dmg 的文件名固定是 `AA-Switch.dmg`（setup.sh 和官网都指向它），版本号不放文件名里，而是：`site/deploy.sh` 上传时顺带生成 `download/latest.json`（版本、日期、地址、sha256）；官网在下载按钮下显示"当前版本 vX.Y.Z"；App 构建时通过 `UPDATE_URL` 记住这个地址，启动时和之后每 6 小时读一次，发现比自己新就在菜单底部显示"有新版本 X.Y.Z，点击更新…"。点了就是应用内更新：下载 `download/AASwitch.app.tar.gz`（deploy.sh 一并上传），依次校验 sha256（latest.json 里的 `tgz_sha256`）、`codesign --verify --deep --strict`、签名 Team ID 与当前安装一致、版本号更新，全过了才写一个小脚本等本进程退出后替换 `/Applications/AA Switch.app` 并重新打开；任一步失败不动现有安装，弹窗给下载页。ad-hoc 签名的开发版不做 Team ID 比对。老于 2.2.0 的版本没有检查更新的逻辑，只能人工通知一次。App 的版本号默认取 `codex-mode.sh` 的 `CODEX_MODE_VERSION`，可用 `VERSION=` 覆盖；GitHub Release 的 tag 用同一个版本号。把 dmg 放到任何能下载的地方发给同事即可。三个 `DEFAULT_*` 都可不填，不填时首次切换会从已有 `config.toml` 推断地址，推断不到就交互询问。
+**版本号与更新提示。** dmg 的文件名固定是 `AA Switch.dmg`（官网 URL 写作 `AA%20Switch.dmg`，浏览器保存时还原成带空格的名字；deploy.sh 另存一份 `AA-Switch.dmg` 兼容旧链接；GitHub Release 的资产名不允许空格，会显示成 `AA.Switch.dmg`，内容相同），版本号不放文件名里，而是：`site/deploy.sh` 上传时顺带生成 `download/latest.json`（版本、日期、地址、sha256）；官网在下载按钮下显示"当前版本 vX.Y.Z"；App 构建时通过 `UPDATE_URL` 记住这个地址，启动时和之后每 6 小时读一次，发现比自己新就在菜单底部显示"有新版本 X.Y.Z，点击更新…"。点了就是应用内更新：下载 `download/AASwitch.app.tar.gz`（deploy.sh 一并上传），依次校验 sha256（latest.json 里的 `tgz_sha256`）、`codesign --verify --deep --strict`、签名 Team ID 与当前安装一致、版本号更新，全过了才写一个小脚本等本进程退出后替换 `/Applications/AA Switch.app` 并重新打开；任一步失败不动现有安装，弹窗给下载页。ad-hoc 签名的开发版不做 Team ID 比对。老于 2.2.0 的版本没有检查更新的逻辑，只能人工通知一次。App 的版本号默认取 `codex-mode.sh` 的 `CODEX_MODE_VERSION`，可用 `VERSION=` 覆盖；GitHub Release 的 tag 用同一个版本号。把 dmg 放到任何能下载的地方发给同事即可。三个 `DEFAULT_*` 都可不填，不填时首次切换会从已有 `config.toml` 推断地址，推断不到就交互询问。
 
 不设 `SIGN_IDENTITY` 时是 ad-hoc 签名，只能通过方式二的 curl 命令分发（curl 下载的文件不带隔离标记，Gatekeeper 不拦；浏览器或聊天软件下载的会被拦）。
 

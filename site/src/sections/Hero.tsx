@@ -6,12 +6,14 @@ import WordsPullUp from '../components/WordsPullUp'
 const HERO_VIDEO =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260405_170732_8a9ccda6-5cff-4628-b164-059c500a2b41.mp4'
 const DOWNLOAD_URL = import.meta.env.VITE_DOWNLOAD_URL || 'https://github.com/yhq1998/AA-switch/releases/latest'
+// 自己托管时保存下来的文件名固定叫“AA Switch.dmg”（同源链接 download 属性才生效，指向 GitHub 时忽略）
+const DOWNLOAD_NAME = import.meta.env.VITE_DOWNLOAD_URL ? 'AA Switch.dmg' : undefined
 // 自己托管 dmg 时，同目录的 latest.json（deploy.sh 生成）记录当前版本，显示在下载按钮下面
 const LATEST_URL = import.meta.env.VITE_DOWNLOAD_URL ? DOWNLOAD_URL.replace(/[^/]*$/, 'latest.json') : ''
-const NAV = [
+const NAV: { label: string; href: string; download?: string }[] = [
   { label: '初衷', href: '#about' },
   { label: '功能', href: '#features' },
-  { label: '下载', href: DOWNLOAD_URL },
+  { label: '下载', href: DOWNLOAD_URL, download: DOWNLOAD_NAME },
   { label: '开源', href: 'https://github.com/yhq1998/AA-switch' },
   { label: '反馈', href: 'https://github.com/yhq1998/AA-switch/issues' },
 ]
@@ -43,6 +45,7 @@ export default function Hero() {
               <a
                 key={item.label}
                 href={item.href}
+                download={item.download}
                 className="whitespace-nowrap text-[10px] transition-colors sm:text-xs md:text-sm"
                 style={linkStyle}
                 onMouseEnter={(e) => (e.currentTarget.style.color = '#E1E0CC')}
@@ -86,6 +89,7 @@ export default function Hero() {
               </motion.p>
               <motion.a
                 href={DOWNLOAD_URL}
+                download={DOWNLOAD_NAME}
                 className="group inline-flex w-fit items-center gap-2 rounded-full bg-primary py-1.5 pl-5 pr-1.5 text-sm font-medium text-black transition-all hover:gap-3 sm:text-base"
                 initial={{ y: 20, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
