@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- 让 macOS / Linux 上也能编译（只是不能运行），CI 和本机都能尽早发现编译错误 -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>AA Switch</AssemblyName>
+    <RootNamespace>AASwitch.Tray</RootNamespace>
+    <Version>0.1.0</Version>
+    <Product>AA Switch</Product>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationIcon>..\..\icon\app.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AASwitch.Core\AASwitch.Core.csproj" />
+    <EmbeddedResource Include="..\..\icon\tray.ico" LogicalName="tray.ico" />
+    <EmbeddedResource Include="..\..\icon\app.ico" LogicalName="app.ico" />
+  </ItemGroup>
+
+</Project>

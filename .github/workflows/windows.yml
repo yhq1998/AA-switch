@@ -37,6 +37,28 @@ jobs:
         run: node e2e/claude-e2e.mjs out/aaswitch.exe
       - name: End-to-end (Codex)
         run: node e2e/codex-e2e.mjs out/aaswitch.exe
+      # 托盘程序：编译、把界面画成 PNG（菜单 / 配置表单 / 初始设置），再真的启动一次看它活着、写了日志，顺便截一张屏
+      - name: Publish tray app
+        run: dotnet publish src/AASwitch.Tray -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o out-tray
+      - name: Render UI to PNG
+        run: |
+          $p = Start-Process -FilePath "out-tray/AA Switch.exe" -ArgumentList '--render', "$PWD\shots" -Wait -PassThru -RedirectStandardOutput render.log -RedirectStandardError render.err
+          Get-Content render.log, render.err
+          if ($p.ExitCode -ne 0) { exit 1 }
+      - name: Launch tray app for real
+        run: |
+          $p = Start-Process -FilePath "out-tray/AA Switch.exe" -PassThru
+          Start-Sleep -Seconds 10
+          if ($p.HasExited) { Write-Error "tray app exited with $($p.ExitCode)"; exit 1 }
+          Get-Content "$env:LOCALAPPDATA\AA Switch\aa-switch.log"
+          try {
+            Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            $bmp.Save("$PWD\shots\screen.png")
+          } catch { Write-Host "screen capture failed: $_" }
+          Stop-Process -Id $p.Id -Force
       - name: Probe
         if: always()
         shell: powershell
@@ -47,5 +69,7 @@ jobs:
           name: aaswitch-windows-x64
           path: |
             windows/out/aaswitch.exe
+            windows/out-tray/AA Switch.exe
+            windows/shots/
             windows/probe.ps1
             windows/aa-switch-probe.txt
