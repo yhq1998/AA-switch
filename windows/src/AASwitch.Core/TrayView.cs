@@ -71,7 +71,7 @@ public static class TrayView
 
         var notes = new List<string>();
         if (mode == "none") notes.Add($"还没用 {appName} 切换过，当前按 Codex 自己的设置运行；点一格开始管理");
-        if (p.IsCodex) notes.Add("切换前请先关掉 Codex 应用、codex 命令行和 IDE 里的 Codex 会话");
+        if (p.IsCodex) notes.Add("切换前请先关掉 Codex（应用、命令行和 IDE 里的会话）");
 
         var warnings = new List<string>();
         if (mixed)

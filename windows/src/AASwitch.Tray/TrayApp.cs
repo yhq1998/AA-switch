@@ -22,6 +22,8 @@ sealed class TrayApp : ApplicationContext
     bool _busy;
     string _busyProduct = "", _busyText = "";
     bool _onboardingShown;
+    bool _headless;          // --click 自测模式：不弹任何窗口，出错只记下来
+    string? _headlessError;
 
     public TrayApp(bool renderOnly = false)
     {
@@ -95,8 +97,12 @@ sealed class TrayApp : ApplicationContext
     }
 
     // 标题、小字说明、警告用 ToolStripLabel：禁用的菜单项一律画成灰色，不认 ForeColor 和字体颜色
-    static readonly Padding LabelMargin = new(30, 1, 8, 1);   // 左边让出勾选栏的宽度，和菜单项的文字对齐
-    ToolStripLabel Label(string text, Font font, Color color) => new(text) { Font = font, ForeColor = color, Margin = LabelMargin, TextAlign = ContentAlignment.MiddleLeft };
+    // 下拉菜单已经替每一项让出了左边的勾选栏，这里不用再缩进；宽度自己量，不然长文字会被菜单右边截掉
+    ToolStripLabel Label(string text, Font font, Color color)
+    {
+        var size = TextRenderer.MeasureText(text, font, Size.Empty, TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
+        return new ToolStripLabel(text) { Font = font, ForeColor = color, AutoSize = false, Size = new Size(size.Width + 12, size.Height + 4), Margin = new Padding(0, 1, 8, 1), TextAlign = ContentAlignment.MiddleLeft };
+    }
 
     ToolStripItem Small(string text, Action? onClick = null)
     {
@@ -142,7 +148,7 @@ sealed class TrayApp : ApplicationContext
                 if (!TrayView.NeedsSwitch(p, mode, info, wantApi) && !(mode == "none" && !wantApi)) return;
                 if (wantApi) EnsureConfiguredThenSwitch(p); else _ = DoSwitchAsync(p, toApi: false);
             };
-            _menu.Items.Add(new ToolStripControlHost(row) { AutoSize = false, Size = row.Size, Margin = new Padding(28, 2, 12, 2) });
+            _menu.Items.Add(new ToolStripControlHost(row) { AutoSize = false, Size = row.Size, Margin = new Padding(2, 3, 12, 3) });
         }
         _menu.Items.Add(Small(view.UrlLine, view.UrlLineOpensConfigure ? () => OpenConfigure(p) : null));
         foreach (var note in view.Notes) _menu.Items.Add(Small(note));
@@ -152,7 +158,7 @@ sealed class TrayApp : ApplicationContext
         more.DropDownItems.Add(Item("配置 API 地址 / key…", () => OpenConfigure(p), !_busy));
         if (view.CanReapply && !_busy) more.DropDownItems.Add(Item("重新应用 API 配置", () => EnsureConfiguredThenSwitch(p)));
         more.DropDownItems.Add(Item("打开备份文件夹", () => { Directory.CreateDirectory(p.BackupsDir); Process.Start("explorer.exe", $"\"{p.BackupsDir}\""); }));
-        more.DropDownItems.Add(new ToolStripSeparator());
+        if (view.Details.Count > 0 || !_status.ContainsKey(p.Name)) more.DropDownItems.Add(new ToolStripSeparator());
         if (!_status.ContainsKey(p.Name)) more.DropDownItems.Add(Item("正在读取状态…", null));
         foreach (var d in view.Details) more.DropDownItems.Add(Item(d, null));
         _menu.Items.Add(more);
@@ -165,6 +171,7 @@ sealed class TrayApp : ApplicationContext
         var url = p.LoadConfig().Url;
         if (url.Length > 0 && p.FindKey(url).Length > 0) { _ = DoSwitchAsync(p, toApi: true, then); return; }
         Log.Write($"{p.Name} 切到 API 前还没配好（地址：{(url.Length == 0 ? "无" : url)}），先弹配置表单");
+        if (_headless) { _headlessError = "还没配置地址或 key"; then?.Invoke(); return; }
         using var form = new ConfigureForm(p);
         if (form.ShowDialog() == DialogResult.OK) _ = DoSwitchAsync(p, toApi: true, then); else then?.Invoke();
     }
@@ -185,11 +192,12 @@ sealed class TrayApp : ApplicationContext
         if (error is null)
         {
             string last; lock (_said) last = _said.LastOrDefault(s => s.StartsWith("已切")) ?? $"{what}完成。";
-            _icon.ShowBalloonTip(4000, p.Name, last, ToolTipIcon.Info);
+            if (!_headless) _icon.ShowBalloonTip(4000, p.Name, last, ToolTipIcon.Info);
             then?.Invoke();
             return;
         }
         Log.Write($"{p.Name} {what}失败：{error}");
+        if (_headless) { _headlessError = error.Message; then?.Invoke(); return; }
         var text = error is SwitchException ? error.Message : $"{error.GetType().Name}：{error.Message}\n\n请点托盘菜单里的“导出诊断信息”，把桌面上生成的文件发给管理员。";
         MessageBox.Show(text, $"{p.Name} {what}失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
@@ -260,6 +268,18 @@ sealed class TrayApp : ApplicationContext
     {
         if (disposing) { _icon.Dispose(); _menu.Dispose(); _ui.Dispose(); _small.Dispose(); _bold.Dispose(); }
         base.Dispose(disposing);
+    }
+
+    /// <summary>给 CI 自测用：不弹窗口，走一遍“点了分段控件的某一格”之后的同一条路径；返回错误信息，成功为 null。</summary>
+    public Task<string?> ClickForTestAsync(string productName, bool toApi)
+    {
+        _headless = true;
+        var done = new TaskCompletionSource<string?>();
+        var p = _products.First(x => (x.IsCodex ? "codex" : "claude") == productName);
+        ReadModes();
+        if (toApi) EnsureConfiguredThenSwitch(p, () => done.TrySetResult(_headlessError));
+        else _ = DoSwitchAsync(p, toApi: false, () => done.TrySetResult(_headlessError));
+        return done.Task;
     }
 
     /// <summary>给 CI 截图用：让菜单带着当前状态同步读一遍，返回菜单控件。</summary>

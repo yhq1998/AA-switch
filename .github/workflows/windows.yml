@@ -40,6 +40,16 @@ jobs:
       # 托盘程序：编译、把界面画成 PNG（菜单 / 配置表单 / 初始设置），再真的启动一次看它活着、写了日志，顺便截一张屏
       - name: Publish tray app
         run: dotnet publish src/AASwitch.Tray -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o out-tray
+      - name: Tray click path (Claude Code)
+        run: |
+          "http://127.0.0.1:9`n`nsk-ui-test" | ./out/aaswitch.exe claude configure
+          foreach ($want in 'api', 'account') {
+            $p = Start-Process -FilePath "out-tray/AA Switch.exe" -ArgumentList '--click', 'claude', $want -Wait -PassThru
+            $mode = ./out/aaswitch.exe claude mode
+            Write-Host "click $want -> exit $($p.ExitCode), mode $mode"
+            if ($p.ExitCode -ne 0 -or $mode -ne $want) { Get-Content "$env:LOCALAPPDATA\AA Switch\aa-switch.log"; exit 1 }
+          }
+          ./out/aaswitch.exe claude api   # 留在 API 模式，让后面的截图里有一组是 API 状态
       - name: Render UI to PNG
         run: |
           $p = Start-Process -FilePath "out-tray/AA Switch.exe" -ArgumentList '--render', "$PWD\shots" -Wait -PassThru -RedirectStandardOutput render.log -RedirectStandardError render.err

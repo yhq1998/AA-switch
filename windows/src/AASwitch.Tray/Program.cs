@@ -3,6 +3,7 @@ using AASwitch.Core;
 using AASwitch.Tray;
 
 // AA Switch 托盘程序。不带参数：常驻托盘（只允许一个实例）。
+//   --click <codex|claude> <api|account>   不显示界面，走一遍点击分段控件后的切换流程然后退出（退出码 0 表示成功）。给 CI 用。
 //   --render <目录>   把菜单、配置表单和初始设置画成 PNG 存到目录里然后退出。给 CI 用：没有人盯着 Windows 屏幕时也能看到界面长什么样。
 static class Program
 {
@@ -11,12 +12,23 @@ static class Program
     {
         ApplicationConfiguration.Initialize();
         if (args.Length == 2 && args[0] == "--render") return Render(args[1]);
+        if (args.Length == 3 && args[0] == "--click") return Click(args[1], args[2] == "api");
 
         using var single = new Mutex(true, @"Local\AASwitch.Tray", out var first);
         if (!first) return 0;
         Application.ThreadException += (_, e) => { Log.Write("未处理的异常：" + e.Exception); MessageBox.Show(e.Exception.Message, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning); };
         Application.Run(new TrayApp());
         return 0;
+    }
+
+    static int Click(string product, bool toApi)
+    {
+        using var app = new TrayApp(renderOnly: true);
+        string? error = "没有完成";
+        app.ClickForTestAsync(product, toApi).ContinueWith(t => { error = t.Result; Application.ExitThread(); }, TaskScheduler.FromCurrentSynchronizationContext());
+        Application.Run();
+        Log.Write($"--click {product} {(toApi ? "api" : "account")}：{error ?? "成功"}");
+        return error is null ? 0 : 1;
     }
 
     static int Render(string dir)
