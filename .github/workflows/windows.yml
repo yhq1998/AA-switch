@@ -80,6 +80,11 @@ jobs:
           path: |
             windows/out/aaswitch.exe
             windows/out-tray/AA Switch.exe
+      # 截图和探测结果单独一个小包，取回来看不用下载几十 MB 的 exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shots
+          path: |
             windows/shots/
-            windows/probe.ps1
             windows/aa-switch-probe.txt
