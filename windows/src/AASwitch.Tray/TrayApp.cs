@@ -27,12 +27,12 @@ sealed class TrayApp : ApplicationContext
     bool _headless;          // --click 自测模式：不弹任何窗口，出错只记下来
     string? _headlessError;
 
-    public TrayApp(bool renderOnly = false)
+    public TrayApp(bool renderOnly = false, List<IProduct>? products = null)
     {
         _ = _ui.Handle;
         _small = new Font(_menu.Font.FontFamily, _menu.Font.Size * 0.9f);
         _bold = new Font(_menu.Font, FontStyle.Bold);
-        _products = CreateProducts(Say);
+        _products = products ?? CreateProducts(Say);
         _icon = new NotifyIcon { Icon = AppInfo.LoadIcon("tray.ico", SystemInformation.SmallIconSize.Width), Text = AppInfo.Name, Visible = !renderOnly, ContextMenuStrip = _menu };
         _icon.MouseUp += (_, e) => { if (e.Button == MouseButtons.Left) ShowMenuAtCursor(); };   // 左键也弹菜单
         if (renderOnly) return;

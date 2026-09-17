@@ -6,6 +6,7 @@ using AASwitch.Tray;
 //   --click <codex|claude> <api|account>   不显示界面，走一遍点击分段控件后的切换流程然后退出（退出码 0 表示成功）。给 CI 用。
 //   --update-now      不显示界面，查一次更新，有新版就下载、校验并替换自己然后退出（不重新打开）。给 CI 用。
 //   --after-update    应用内更新后由旧版本启动新版本时带的参数：等旧版本退出后再常驻。
+//   --render <目录> --demo   同上，但用一套固定的演示数据（README 里的截图就是这么出的），不读真实配置。
 //   --render <目录>   把菜单、配置表单和初始设置画成 PNG 存到目录里然后退出。给 CI 用：没有人盯着 Windows 屏幕时也能看到界面长什么样。
 static class Program
 {
@@ -13,7 +14,7 @@ static class Program
     static int Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
-        if (args.Length == 2 && args[0] == "--render") return Render(args[1]);
+        if (args.Length is 2 or 3 && args[0] == "--render") return Render(args[1], demo: args.Contains("--demo"));
         if (args.Length == 3 && args[0] == "--click") return Click(args[1], args[2] == "api");
         if (args.Length == 1 && args[0] == "--update-now") return Headless(app => app.UpdateForTestAsync(), "--update-now");
 
@@ -38,7 +39,7 @@ static class Program
         return error is null ? 0 : 1;
     }
 
-    static int Render(string dir)
+    static int Render(string dir, bool demo)
     {
         Directory.CreateDirectory(dir);
         void Save(Control c, string name)
@@ -51,7 +52,8 @@ static class Program
         }
         try
         {
-            using var app = new TrayApp(renderOnly: true);
+            List<IProduct>? demoProducts = demo ? [new DemoProduct(codex: true, "api"), new DemoProduct(codex: false, "account")] : null;
+            using var app = new TrayApp(renderOnly: true, demoProducts);
             var menu = app.MenuForRender();
             menu.Show(new Point(40, 40));
             Save(menu, "menu");
@@ -59,7 +61,7 @@ static class Program
             if (more is not null) { more.ShowDropDown(); Save(more.DropDown, "menu-more"); }
             menu.Close();
 
-            var products = TrayApp.CreateProducts(_ => { });
+            var products = demoProducts ?? TrayApp.CreateProducts(_ => { });
             foreach (var p in products)
                 using (var form = new ConfigureForm(p)) { form.Show(); Save(form, "configure-" + (p.IsCodex ? "codex" : "claude")); }
             var targets = products.Where(p => p.ModeWord() != "absent").Select(p => (p, p.ModeWord(), TrayView.Parse(p.Status()))).ToList();

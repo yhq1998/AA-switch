@@ -60,6 +60,9 @@ jobs:
           $p = Start-Process -FilePath "out-tray/AA Switch.exe" -ArgumentList '--render', "$PWD\shots" -Wait -PassThru -RedirectStandardOutput render.log -RedirectStandardError render.err
           Get-Content render.log, render.err
           if ($p.ExitCode -ne 0) { exit 1 }
+          # README 用的截图：固定的演示数据，不带这台机器上的测试地址
+          $p = Start-Process -FilePath "out-tray/AA Switch.exe" -ArgumentList '--render', "$PWD\shots\demo", '--demo' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { exit 1 }
       - name: Launch tray app for real
         run: |
           $p = Start-Process -FilePath "out-tray/AA Switch.exe" -PassThru
