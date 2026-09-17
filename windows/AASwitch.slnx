@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AASwitch.Cli/AASwitch.Cli.csproj" />
+    <Project Path="src/AASwitch.Core/AASwitch.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AASwitch.Core.Tests/AASwitch.Core.Tests.csproj" />
+  </Folder>
+</Solution>

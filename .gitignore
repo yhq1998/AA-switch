@@ -3,3 +3,8 @@ menubar/dist/
 # 由 SVG 生成的图标，构建时自动重建
 menubar/icon/AppIcon.icns
 menubar/icon/menubar/
+# Windows 版的构建产物
+windows/**/bin/
+windows/**/obj/
+windows/out/
+windows/aa-switch-probe.txt
