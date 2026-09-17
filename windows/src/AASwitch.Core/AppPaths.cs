@@ -26,4 +26,8 @@ public sealed class AppPaths
     public string ClaudeGlobalState => Path.Combine(Home, ".claude.json");
     public string ClaudeCredentialsFile => Path.Combine(ClaudeHome, ".credentials.json");
     public string CodexConf => Path.Combine(CodexHome, "codex-mode.conf");
+    public string CodexConfig => Path.Combine(CodexHome, "config.toml");
+    public string CodexAuth => Path.Combine(CodexHome, "auth.json");
+    public string CodexAuthStash => Path.Combine(CodexHome, "codex-mode-auth", "chatgpt.json");
+    public string CodexBackups => Path.Combine(CodexHome, "codex-mode-backups");
 }

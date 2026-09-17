@@ -8,3 +8,4 @@ windows/**/bin/
 windows/**/obj/
 windows/out/
 windows/aa-switch-probe.txt
+windows/out-mac/

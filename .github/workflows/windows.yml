@@ -24,16 +24,19 @@ jobs:
       - name: Test
         run: dotnet test -c Release
       - name: Publish aaswitch.exe
-        run: dotnet publish src/AASwitch.Cli -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -p:DebugType=none -o out
+        run: dotnet publish src/AASwitch.Cli -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -o out
       - name: Smoke run
         run: |
           ./out/aaswitch.exe version
           ./out/aaswitch.exe claude status
-      # 端到端：真的 Claude Code + 本机假网关 + 真的凭据管理器，见 windows/e2e/claude-e2e.mjs
+          ./out/aaswitch.exe codex status
+      # 端到端：真的 Claude Code / codex 命令行 + 本机假网关 + 真的凭据管理器，见 windows/e2e/
       - name: Install Claude Code and Codex CLI
         run: npm install -g @anthropic-ai/claude-code @openai/codex
       - name: End-to-end (Claude Code)
         run: node e2e/claude-e2e.mjs out/aaswitch.exe
+      - name: End-to-end (Codex)
+        run: node e2e/codex-e2e.mjs out/aaswitch.exe
       - name: Probe
         if: always()
         shell: powershell

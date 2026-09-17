@@ -16,7 +16,9 @@ key 的条目名 `codex-mode:域名`（存在 Windows 凭据管理器的“普�
 ## 进度
 
 - [x] Claude Code（终端和 IDE 插件）切换：`aaswitch claude api|account|status|configure|…`
-- [ ] Codex 切换（config.toml、auth.json、会话的 model_provider、state_*.sqlite）
+- [x] Codex 切换：`aaswitch codex api|chatgpt|fix-threads|status|…`（config.toml 的 provider 别名、会话和 state_*.sqlite 的 provider 统一、
+      ChatGPT 登录态存档与恢复、失败回滚）。与 macOS 的 codex-mode.sh 用同一份数据做过对照，产出一致。切换前要自己关掉 Codex 应用和 codex 进程，
+      自动退出 / 重开应用放在下一步
 - [ ] Claude 桌面应用的第三方推理模式、会话列表同步（等 probe 结果确认路径）
 - [ ] 托盘程序、配置表单、开机自启
 - [ ] 自更新、官网下载按钮、deploy.sh
@@ -27,7 +29,11 @@ key 的条目名 `codex-mode:域名`（存在 Windows 凭据管理器的“普�
 brew install dotnet
 cd windows
 dotnet test
-dotnet publish src/AASwitch.Cli -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -p:DebugType=none -o out
+dotnet publish src/AASwitch.Cli -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -o out
+
+# 端到端（真的 claude / codex + 本地假网关），本机用临时目录，不碰自己的配置；先按上面的参数发布一份 -r osx-arm64 到 out-mac
+E2E_ISOLATED=1 node e2e/claude-e2e.mjs out-mac/aaswitch
+E2E_ISOLATED=1 CODEX_BIN=/Applications/ChatGPT.app/Contents/Resources/codex node e2e/codex-e2e.mjs out-mac/aaswitch
 ```
 
 推到 GitHub 后 `.github/workflows/windows.yml` 会在 Windows 机器上跑测试（含真实的凭据管理器读写）并产出 `aaswitch-windows-x64`。
