@@ -25,11 +25,14 @@
 
 AA Switch lives in your Mac's menu bar (or the Windows system tray). Open it to see which side Codex and Claude Code are each on right now, and click to flip.
 
-<p align="center">
-  <img src="docs/screenshots/windows-menu.png" width="366" alt="The AA Switch menu: one Account | API toggle each for Codex and Claude Code">
-</p>
+<table align="center">
+  <tr>
+    <td align="center" valign="top"><img src="docs/screenshots/macos-menu.png" width="330" alt="The AA Switch menu in the macOS menu bar"><br><sub>macOS</sub></td>
+    <td align="center" valign="top"><img src="docs/screenshots/windows-menu.png" width="330" alt="The AA Switch menu in the Windows system tray"><br><sub>Windows</sub></td>
+  </tr>
+</table>
 
-<p align="center"><sub>Screenshots show the Windows version; the interface is in Chinese.</sub></p>
+<p align="center"><sub>The interface is in Chinese. Each product has one Account | API toggle; the lit half is the current mode.</sub></p>
 
 - **Two modes, one click.** Use your subscription, or route through your own API key. Switch back and forth as often as you like; Codex and Claude Code flip independently.
 - **Your history comes with you.** Every conversation stays visible and usable on both sides.

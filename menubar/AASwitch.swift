@@ -128,6 +128,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
         checkUpdate()
         Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in self?.checkUpdate() }
+        if let out = ProcessInfo.processInfo.environment["AASWITCH_RENDER_MENU"], !out.isEmpty { renderMenuForScreenshot(to: out) }
+    }
+
+    // MARK: 给 README 出截图：设了环境变量 AASWITCH_RENDER_MENU=输出.png 时，等状态读完后自己点开菜单、拍成 PNG 然后退出。
+    // 配合 CODEX_HOME / CLAUDE_CONFIG_DIR 指到一份演示数据用（做法见 docs/screenshots/README.md）。
+    // 菜单是毛玻璃材质，后面得有东西才是平时看到的样子，所以把菜单弹在屏幕中间、后面垫一个渐变色的窗口，再把这块屏幕区域拍下来。
+    // 程序没有屏幕录制权限时，拍到的只有自己的窗口（衬底 + 菜单），不会把别的应用拍进去。
+    private var screenshotBackdrop: NSWindow?
+    private func renderMenuForScreenshot(to path: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self = self else { return }
+            // 菜单打开期间主线程停在菜单的事件循环里，所以定时器要加到 common 模式才会触发
+            let placeBackdrop = Timer(timeInterval: 1.0, repeats: false) { _ in
+                guard let menuRect = self.menuWindowRect() else { self.log("截图菜单：没找到菜单窗口"); exit(1) }
+                let area = menuRect.insetBy(dx: -32, dy: -32)   // CoreGraphics 坐标：原点在主屏左上角
+                let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+                let window = NSWindow(contentRect: NSRect(x: area.minX, y: screenHeight - area.maxY, width: area.width, height: area.height),
+                                      styleMask: .borderless, backing: .buffered, defer: false)
+                let gradient = CAGradientLayer()
+                gradient.colors = [NSColor(srgbRed: 1.0, green: 0.89, blue: 0.925, alpha: 1).cgColor, NSColor(srgbRed: 0.79, green: 0.84, blue: 1.0, alpha: 1).cgColor]
+                window.contentView?.wantsLayer = true
+                gradient.frame = window.contentView?.bounds ?? .zero
+                window.contentView?.layer?.addSublayer(gradient)
+                window.level = .floating          // 在普通窗口之上、菜单之下
+                window.ignoresMouseEvents = true
+                window.orderFrontRegardless()
+                self.screenshotBackdrop = window
+                let capture = Timer(timeInterval: 0.8, repeats: false) { _ in
+                    let ok = self.captureScreen(area, to: path)
+                    self.log("截图菜单到 \(path)：\(ok ? "成功" : "失败")")
+                    exit(ok ? 0 : 1)
+                }
+                RunLoop.main.add(capture, forMode: .common)
+            }
+            RunLoop.main.add(placeBackdrop, forMode: .common)
+            // 不从菜单栏图标弹出，而是把同一个菜单弹在屏幕中间：系统菜单栏就算没有屏幕录制权限也会被拍进去，上面有别的应用的图标
+            let screen = NSScreen.screens.first?.visibleFrame ?? .zero
+            self.menu.popUp(positioning: nil, at: NSPoint(x: screen.midX - 160, y: screen.maxY - 120), in: nil)
+        }
+    }
+    // 自己的菜单窗口在屏幕上的位置。菜单在弹出菜单那一层（101）；状态栏图标自己也是一个窗口，所以按高度取最大的
+    private func menuWindowRect() -> CGRect? {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let rects = (CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? [])
+            .filter { ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 101 }
+            .compactMap { ($0[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) } }
+        return rects.max { $0.height < $1.height }
+    }
+    private func captureScreen(_ area: CGRect, to path: String) -> Bool {
+        // CGWindowListCreateImage 在新 SDK 里被标成不可用（让人改用 ScreenCaptureKit），这里按符号名调用
+        typealias CreateImage = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return false }
+        // 1 = 屏幕上这块区域里的所有窗口；8 = 按屏幕的实际分辨率（Retina 下是 2 倍）
+        guard let image = unsafeBitCast(symbol, to: CreateImage.self)(area, 1, 0, 8)?.takeRetainedValue() else { return false }
+        // 裁成圆角
+        let scale = CGFloat(image.width) / area.width
+        let width = image.width, height = image.height
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+                                         hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: rep) else { return false }
+        let canvas = CGRect(x: 0, y: 0, width: width, height: height)
+        context.cgContext.addPath(CGPath(roundedRect: canvas, cornerWidth: 18 * scale, cornerHeight: 18 * scale, transform: nil))
+        context.cgContext.clip()
+        context.cgContext.draw(image, in: canvas)
+        guard let png = rep.representation(using: .png, properties: [:]) else { return false }
+        return (try? png.write(to: URL(fileURLWithPath: path))) != nil
     }
 
     // MARK: 检查更新：读官网的 latest.json（地址在 Info.plist 的 AAUpdateURL，构建时由 UPDATE_URL 决定；没设就不查）

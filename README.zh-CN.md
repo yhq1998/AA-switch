@@ -25,9 +25,12 @@
 
 AA Switch 住在 Mac 的菜单栏（或 Windows 的托盘）里，点开就能看到 Codex 和 Claude Code 现在各走的是哪边。再点一下就切。
 
-<p align="center">
-  <img src="docs/screenshots/windows-menu.png" width="366" alt="AA Switch 的菜单：Codex 和 Claude Code 各一行“账号 | API”开关">
-</p>
+<table align="center">
+  <tr>
+    <td align="center" valign="top"><img src="docs/screenshots/macos-menu.png" width="330" alt="macOS 菜单栏里的 AA Switch 菜单"><br><sub>macOS</sub></td>
+    <td align="center" valign="top"><img src="docs/screenshots/windows-menu.png" width="330" alt="Windows 托盘里的 AA Switch 菜单"><br><sub>Windows</sub></td>
+  </tr>
+</table>
 
 - **两种模式，一键切换。** 用订阅账号，或者走你自己的 API key，想换随时换。Codex 和 Claude Code 各自独立切换。
 - **历史会话跟着走。** 切换前后，所有对话都还在，都能继续聊。
