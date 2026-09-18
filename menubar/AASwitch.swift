@@ -793,20 +793,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.messageText = "配置 \(p.name) API"
         alert.informativeText = error ?? (p.urlHint + " key 只保存在 macOS 钥匙串里，按地址域名保存，Codex 和 Claude Code 用同一个网关时共用一个 key。换地址时记得把 key 也换成该地址对应的。")
         if error != nil { alert.alertStyle = .warning }
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 118))
-        func row(_ title: String, _ field: NSTextField, y: CGFloat) {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 150))
+        func row(_ title: String, _ field: NSTextField, y: CGFloat, height: CGFloat = 24) {
             let label = NSTextField(labelWithString: title)
-            label.frame = NSRect(x: 0, y: y + 2, width: 96, height: 20); label.alignment = .right
-            field.frame = NSRect(x: 104, y: y, width: 336, height: 24)
+            label.frame = NSRect(x: 0, y: y + height - 22, width: 96, height: 20); label.alignment = .right
+            field.frame = NSRect(x: 104, y: y, width: 336, height: height)
             view.addSubview(label); view.addSubview(field)
+        }
+        // 地址和请求头是单行：太长时在框里横向滚动，而不是折到看不见的第二行
+        func singleLine(_ field: NSTextField) {
+            field.cell?.usesSingleLineMode = true; field.cell?.wraps = false; field.cell?.isScrollable = true
         }
         let urlField = NSTextField(); urlField.stringValue = baseURL; urlField.placeholderString = p.urlPlaceholder
         let headerField = NSTextField(); headerField.stringValue = headers; headerField.placeholderString = "名称=值，多个用逗号分隔；通常留空"
-        let keyField = NSTextField()   // 明文显示，并回填当前地址已保存的 key，方便核对
+        singleLine(urlField); singleLine(headerField)
+        // 明文显示，并回填当前地址已保存的 key，方便核对。key 很长，给四行高、等宽小字、按字符折行，整个 key 都看得到
+        let keyField = NSTextField()
+        keyField.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        keyField.cell?.wraps = true; keyField.cell?.isScrollable = false
+        keyField.cell?.lineBreakMode = .byCharWrapping
         let savedKey = baseURL.isEmpty ? "" : run(p, ["key", baseURL]).out.trimmingCharacters(in: .whitespacesAndNewlines)
         keyField.stringValue = savedKey
         keyField.placeholderString = "sk-…"
-        row("API 地址", urlField, y: 88); row("额外请求头", headerField, y: 48); row("API key", keyField, y: 8)
+        row("API 地址", urlField, y: 120); row("额外请求头", headerField, y: 80); row("API key", keyField, y: 8, height: 56)
         urlField.nextKeyView = headerField; headerField.nextKeyView = keyField; keyField.nextKeyView = urlField
         alert.accessoryView = view
         alert.addButton(withTitle: "保存")
@@ -815,7 +824,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { then?(false); return }
         let hdr = headerField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = keyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = keyField.stringValue.components(separatedBy: .whitespacesAndNewlines).joined()   // key 里不会有空白；粘贴带进来的换行一并去掉
         let (url, urlError) = normalizeURL(urlField.stringValue, for: p)
         if let urlError = urlError { showConfigureForm(p, baseURL: url, headers: hdr, error: urlError, then: then); return }
         // key 留空时看这个地址有没有存过（Codex 还会尝试当前在用的 / 旧版条目）
