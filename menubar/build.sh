@@ -19,6 +19,10 @@ set -eu
 cd "$(dirname "$0")"
 command -v swiftc >/dev/null || { echo "需要 swiftc：xcode-select --install" >&2; exit 1; }
 
+# 打包前先在一个空的临时家目录里把两个脚本的主要路径跑一遍（模拟新用户），不通过就不出包
+echo "· 冒烟测试"
+../smoke-test.sh || { echo "冒烟测试没有通过，已停止打包。" >&2; exit 1; }
+
 APP_NAME="${APP_NAME:-AA Switch}"
 EXEC_NAME="${EXEC_NAME:-AASwitch}"
 BUNDLE_ID="${BUNDLE_ID:-com.omniapexroute.aaswitch}"
