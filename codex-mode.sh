@@ -31,7 +31,7 @@
 #   非交互配置：CODEX_MODE_BASE_URL、CODEX_MODE_HEADERS（名称=值，逗号分隔）、CODEX_MODE_KEY_STDIN=1（从标准输入读 key，
 #   可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。
 set -eu
-CODEX_MODE_VERSION="2.2.3"
+CODEX_MODE_VERSION="2.2.4"
 
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CFG="$CODEX_HOME/config.toml"
@@ -266,20 +266,26 @@ fix_threads() {  # 把记成 openai 的会话改记为 ${PROVIDER}，只改文�
 
 # ---------- 应用进程 ----------
 app_running() { pgrep -x "$APP_NAME" >/dev/null 2>&1; }
+codex_running() { pgrep -x codex >/dev/null 2>&1 || pgrep -x codex-app-server >/dev/null 2>&1; }
+APP_QUIT=0   # 应用是本脚本退掉的、还没重新打开；此时不管哪一步失败退出，都要把应用还给用户
+trap 'rc=$?; if [ "$rc" != 0 ] && [ "$APP_QUIT" = 1 ]; then say "切换没有完成，重新打开 ${APP_NAME}。"; reopen_app; fi' EXIT
 quit_app() {
   [ "${CODEX_MODE_FORCE:-}" = 1 ] && return 0
   if app_running; then
+    APP_QUIT=1
     say "正在退出 ${APP_NAME}…"
     osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
     for _ in $(seq 1 150); do app_running || break; sleep 0.2; done   # 最多等 30 秒
     if app_running; then die "$APP_NAME 没有退出，请手动 ⌘Q 后重试。"; fi
+    # 应用自带的 codex 子进程会比主进程晚几秒退出，等它收尾，别当成外部会话
+    for _ in $(seq 1 50); do codex_running || break; sleep 0.2; done   # 最多等 10 秒
     sleep 0.3   # 进程刚退出，给文件句柄一点释放时间
   fi
-  if pgrep -x codex >/dev/null 2>&1 || pgrep -x codex-app-server >/dev/null 2>&1; then
+  if codex_running; then
     die "还有 codex 命令行或 IDE 会话在运行，请先关闭它们再切换，避免同时写会话记录。"
   fi
 }
-reopen_app() { if [ "${CODEX_MODE_NO_REOPEN:-}" != 1 ]; then open -a "$APP_NAME" >/dev/null 2>&1 || say "请手动打开 ${APP_NAME}。"; fi; }
+reopen_app() { APP_QUIT=0; if [ "${CODEX_MODE_NO_REOPEN:-}" != 1 ]; then open -a "$APP_NAME" >/dev/null 2>&1 || say "请手动打开 ${APP_NAME}。"; fi; }
 auth_mode() {
   local out; out="$("$CODEX" login status 2>&1 || true)"
   case "$out" in *ChatGPT*|*chatgpt*) echo chatgpt ;; *"API key"*|*"api key"*|*api_key*) echo api_key ;; *) echo "" ;; esac

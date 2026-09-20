@@ -45,12 +45,30 @@ cat > "$T/bin/curl" <<'EOF'
 # 假网关：只回一个 HTTP 状态码（脚本用 -w '%{http_code}' 取它）
 printf '%s' "${SMOKE_HTTP_CODE:-200}"
 EOF
-printf '#!/bin/bash\nexit 1\n' > "$T/bin/pgrep"    # 没有任何应用在运行
-printf '#!/bin/bash\nexit 0\n' > "$T/bin/open"
+cat > "$T/bin/pgrep" <<'EOF'
+#!/bin/bash
+# 假进程表：默认什么都没在运行。$SMOKE_PROC/app 存在 = 应用开着；codex_forever 存在 = 一直有 codex 进程；
+# codex_until 里是个时间戳，到点之前算有 codex 进程（模拟应用自带的子进程比主进程晚退）
+case "${2:-}" in
+  Codex) [ -f "$SMOKE_PROC/app" ] ;;
+  codex)
+    [ -f "$SMOKE_PROC/codex_forever" ] && exit 0
+    [ -f "$SMOKE_PROC/codex_until" ] && [ "$(date +%s)" -lt "$(cat "$SMOKE_PROC/codex_until")" ] ;;
+  *) exit 1 ;;
+esac
+EOF
+cat > "$T/bin/open" <<'EOF'
+#!/bin/bash
+echo "$*" >> "$SMOKE_PROC/open.log"
+EOF
 cat > "$T/bin/osascript" <<'EOF'
 #!/bin/bash
-# 只放行 JavaScript（读写 JSON 用）；AppleScript（让应用退出）一律不执行
+# 只放行 JavaScript（读写 JSON 用）；AppleScript（让应用退出）不执行，只在假进程表里记一笔
 if [ "${1:-}" = -l ] && [ "${2:-}" = JavaScript ]; then exec /usr/bin/osascript "$@"; fi
+case "$*" in *"to quit"*)
+  rm -f "$SMOKE_PROC/app"
+  [ -n "${SMOKE_LINGER:-}" ] && echo $(( $(date +%s) + SMOKE_LINGER )) > "$SMOKE_PROC/codex_until" ;;
+esac
 exit 0
 EOF
 cat > "$T/bin/codex" <<'EOF'
@@ -74,7 +92,7 @@ chmod +x "$T/bin"/*
 
 export HOME="$T/home" PATH="$T/bin:/usr/bin:/bin:/usr/sbin:/sbin" LANG=en_US.UTF-8
 unset LC_ALL 2>/dev/null || true
-export SMOKE_KEYCHAIN="$T/keychain"
+export SMOKE_KEYCHAIN="$T/keychain" SMOKE_PROC="$T/proc"; mkdir -p "$SMOKE_PROC"
 export CODEX_HOME="$T/codex" CODEX_BIN="$T/bin/codex" CODEX_APP_NAME=Codex
 export CODEX_MODE_NONINTERACTIVE=1 CODEX_MODE_NO_REOPEN=1 CODEX_MODE_FORCE=1
 export CLAUDE_CONFIG_DIR="$T/claude" CLAUDE_DESKTOP_DATA_DIR="$T/desktop/Claude"
@@ -157,6 +175,20 @@ SMOKE_LOGIN_FAIL=1 run codex api; fails "codex 登录失败时切 API"
 eq "登录失败后配置回滚了" "$(sum "$CODEX_HOME/config.toml")" "$BEFORE"
 has "登录失败后登录态回滚了" "$(cat "$CODEX_HOME/auth.json")" "rt-smoke"
 run codex mode; eq "登录失败后仍是 chatgpt" "$OUT" chatgpt
+
+# 真的走一遍“退出应用 → 切换 → 重新打开”（上面都用 CODEX_MODE_FORCE=1 跳过了这一段）
+touch "$SMOKE_PROC/app"; rm -f "$SMOKE_PROC/open.log"
+CODEX_MODE_FORCE="" CODEX_MODE_NO_REOPEN="" SMOKE_LINGER=2 run codex fix-threads
+ok "应用自带的 codex 子进程晚 2 秒退出时，等它而不是报错"
+has "切完重新打开了应用" "$(cat "$SMOKE_PROC/open.log" 2>/dev/null)" "-a Codex"
+touch "$SMOKE_PROC/app" "$SMOKE_PROC/codex_forever"; rm -f "$SMOKE_PROC/open.log"
+CODEX_MODE_FORCE="" CODEX_MODE_NO_REOPEN="" run codex fix-threads
+fails "还有外部 codex 会话时切换"; has "报错说清楚了" "$ERR" "codex 命令行或 IDE"
+has "切换失败也把应用重新打开" "$(cat "$SMOKE_PROC/open.log" 2>/dev/null)" "-a Codex"
+rm -f "$SMOKE_PROC/codex_forever"; touch "$SMOKE_PROC/app"; rm -f "$SMOKE_PROC/open.log"
+CODEX_MODE_FORCE="" CODEX_MODE_NO_REOPEN="" SMOKE_LOGIN_FAIL=1 run codex api
+fails "应用开着、登录失败时切 API"; has "登录失败也把应用重新打开" "$(cat "$SMOKE_PROC/open.log" 2>/dev/null)" "-a Codex"
+rm -f "$SMOKE_PROC"/*
 
 for i in $(seq 10 34); do mkdir -p "$CODEX_HOME/codex-mode-backups/20200101-0000$i"; done   # 25 份老备份
 sleep 1   # 备份目录名精确到秒，和上面几次错开
