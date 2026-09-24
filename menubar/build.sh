@@ -84,10 +84,9 @@ if [ -n "${NOTARY_PROFILE:-}" ]; then
   xcrun stapler staple "$APP" | tail -1
 fi
 
-echo "· 打 dmg"
-mkdir -p "$STAGE/dmg"; cp -R "$APP" "$STAGE/dmg/"; ln -s /Applications "$STAGE/dmg/Applications"
+echo "· 打 dmg（带“拖到 Applications”的背景图）"
 DMG="$OUT/$APP_NAME.dmg"
-hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE/dmg" -ov -format UDZO -quiet "$DMG"
+./make-dmg.sh "$APP" "$DMG"
 codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
 tar -C "$OUT" -czf "$OUT/AASwitch.app.tar.gz" "$APP_NAME.app"
 

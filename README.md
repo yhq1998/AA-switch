@@ -45,7 +45,7 @@ AA Switch lives in your Mac's menu bar (or the Windows system tray). Open it to 
 ### macOS
 
 1. Download **AA Switch.dmg** from [aaswitch.omniapexroute.com](https://aaswitch.omniapexroute.com) (or from the [Releases](https://github.com/yhq1998/AA-switch/releases) page).
-2. Drag **AA Switch** into your Applications folder and open it.
+2. Open the dmg, drag **AA Switch** into Applications and open it from there. Double-clicking it inside the dmg works too: it offers to install itself into Applications and ejects the disk image.
 3. Look for the little switch at the top right of your screen.
 
 Requires macOS 13 or later on either Intel or Apple silicon (the app is a universal binary), and at least one of: the Codex desktop app, or Claude Code (terminal or IDE extension).

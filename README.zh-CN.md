@@ -43,7 +43,7 @@ AA Switch 住在 Mac 的菜单栏（或 Windows 的托盘）里，点开就能�
 ### macOS
 
 1. 到官网 [aaswitch.omniapexroute.com](https://aaswitch.omniapexroute.com) 下载 **AA Switch.dmg**（国内直连；也可从 [Releases](https://github.com/yhq1998/AA-switch/releases) 下载）。
-2. 把 **AA Switch** 拖进“应用程序”文件夹，打开它。
+2. 打开 dmg，把 **AA Switch** 拖进“应用程序”文件夹，再从“应用程序”打开它。直接在 dmg 里双击也行，它会提示把自己装进“应用程序”并推出安装盘。
 3. 屏幕右上角会出现一个小开关。
 
 需要 macOS 13 或更新版本，Intel 和 Apple 芯片都支持（通用二进制）。Codex 桌面应用、Claude Code（终端或 IDE 插件）至少装一个。

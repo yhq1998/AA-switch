@@ -112,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var products: [Product] { [codex, claude] }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if offerInstallFromDiskImage() { return }   // 要放在单实例检查前面：装新版时得先把已经在跑的旧版关掉
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .filter { $0 != NSRunningApplication.current }
         if !others.isEmpty { NSApp.terminate(nil); return }
@@ -123,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.image = menubarImage()
         statusItem.button?.title = ""
         log("\(appName) \(appVersion) 启动，脚本：\(codex.script)、\(claude.script)")
+        repairLoginItem()
         for p in products { ensureScriptInstalled(p) }
         refresh()
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
@@ -350,6 +352,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return script
     }
 
+    // MARK: 直接在 dmg 里打开时（或被系统“应用转移”到随机的只读目录里运行），提议装进“应用程序”再从那里重开。
+    // 不装的话：聚焦搜索和启动台找不到它，推出 dmg 或重启后图标就没了，开机自启记下的路径也会失效。
+    private var runningFromTemporaryLocation: Bool {
+        let path = Bundle.main.bundlePath
+        if path.contains("/AppTranslocation/") { return true }
+        guard path.hasPrefix("/Volumes/") else { return false }   // 外接硬盘上的可写目录不算，只管只读的 dmg
+        return (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.volumeIsReadOnlyKey]))?.volumeIsReadOnly == true
+    }
+    // 被“应用转移”时 bundlePath 是随机目录，原位置（dmg 里）要问 Security 框架；拿不到就当没转移
+    private func originalBundlePath() -> String {
+        let path = Bundle.main.bundlePath
+        guard path.contains("/AppTranslocation/"),
+              let handle = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY),
+              let sym = dlsym(handle, "SecTranslocateCreateOriginalPathForURL") else { return path }
+        typealias Fn = @convention(c) (CFURL, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> Unmanaged<CFURL>?
+        let original = unsafeBitCast(sym, to: Fn.self)(URL(fileURLWithPath: path) as CFURL, nil)?.takeRetainedValue() as URL?
+        return original?.path ?? path
+    }
+    // 返回 true 表示已经装好、正在退出并从新位置重开
+    private func offerInstallFromDiskImage() -> Bool {
+        guard runningFromTemporaryLocation else { return false }
+        let original = originalBundlePath()
+        let dir = FileManager.default.isWritableFile(atPath: "/Applications") ? "/Applications" : NSHomeDirectory() + "/Applications"
+        let dest = dir + "/" + (original as NSString).lastPathComponent
+        log("从临时位置启动：\(Bundle.main.bundlePath)（原位置 \(original)）")
+        let alert = NSAlert()
+        alert.messageText = "把 \(appName) 装进“应用程序”？"
+        alert.informativeText = "现在是直接从安装盘里打开的。装好后会从“应用程序”重新打开，以后在启动台和聚焦搜索里都能找到，安装盘也会自动推出。\n\n不装的话，推出安装盘或重启后菜单栏图标就会消失。"
+        alert.addButton(withTitle: "安装到应用程序")
+        alert.addButton(withTitle: "暂不安装")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { log("用户选择暂不安装"); return false }
+        if let failure = installCopy(to: dest) {
+            log("安装到 \(dest) 失败：\(failure)")
+            let error = NSAlert()
+            error.messageText = "没能装进“应用程序”"
+            error.informativeText = failure + "\n\n请在安装盘窗口里把 \(appName) 拖到 Applications 文件夹，再从“应用程序”打开。"
+            error.alertStyle = .warning
+            error.runModal()
+            return false
+        }
+        // 装好的那份要等本进程退出后再打开，否则它的单实例检查会把自己关掉；dmg 也只能等本进程退出后才推得掉
+        var volume = ""
+        if let values = try? URL(fileURLWithPath: original).resourceValues(forKeys: [.volumeURLKey, .volumeIsReadOnlyKey]),
+           values.volumeIsReadOnly == true, let url = values.volume, url.path.hasPrefix("/Volumes/") { volume = url.path }
+        let script = """
+        for _ in $(seq 1 150); do kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null || break; sleep 0.2; done
+        \(volume.isEmpty ? "" : "hdiutil detach \(quote(volume)) -quiet 2>/dev/null")
+        open -a \(quote(dest))
+        """
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-c", script]
+        try? p.run()
+        log("已装到 \(dest)，退出并从那里重新打开" + (volume.isEmpty ? "" : "，推出 \(volume)"))
+        NSApp.terminate(nil)
+        return true
+    }
+    // 复制到 dest，返回 nil 表示成功。已经在跑的旧版先关掉；dest 上的旧版移到废纸篓（出问题还能找回）
+    private func installCopy(to dest: String) -> String? {
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).filter { $0 != NSRunningApplication.current }
+        others.forEach { $0.terminate() }
+        let deadline = Date().addingTimeInterval(5)
+        while others.contains(where: { !$0.isTerminated }) && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+        others.filter { !$0.isTerminated }.forEach { $0.forceTerminate() }
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(atPath: (dest as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            if fm.fileExists(atPath: dest) {
+                do { try fm.trashItem(at: URL(fileURLWithPath: dest), resultingItemURL: nil) } catch { try fm.removeItem(atPath: dest) }
+            }
+        } catch { return error.localizedDescription }
+        let (code, out) = shell("/usr/bin/ditto", [Bundle.main.bundlePath, dest])
+        guard code == 0 else { try? fm.removeItem(atPath: dest); return "复制失败：" + out }
+        _ = shell("/usr/bin/xattr", ["-dr", "com.apple.quarantine", dest])
+        return nil
+    }
+
     // 菜单栏程序没有主菜单，⌘C / ⌘V / ⌘A 这类快捷键要靠“编辑”菜单转发；装一个不可见的即可
     private func installEditMenu() {
         let main = NSMenu()
@@ -415,10 +495,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: 菜单打开时先用快速的 mode 命令刷新，再异步刷新完整状态
     func menuWillOpen(_ menu: NSMenu) {
+        if !busy { readModes() }
+        render()            // 菜单还没显示，这时重建是安全的
         menuOpen = true
         log("打开菜单，Codex \(mode[codex.name] ?? "?")，Claude \(mode[claude.name] ?? "?")，菜单项：" + menu.items.map { $0.isSeparatorItem ? "|" : ($0.isEnabled ? "[\($0.title)]" : $0.title) }.joined(separator: " / "))
-        if !busy { readModes(); render() }
-        refreshStatusAsync()
+        refreshStatusAsync()   // 读到的新状态等菜单关了再画，下次打开时就是新的
     }
     func menuDidClose(_ menu: NSMenu) {
         menuOpen = false
@@ -893,15 +974,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if loginEnabled {
             try? FileManager.default.removeItem(atPath: agentPath)
         } else {
-            let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
-            let plist: [String: Any] = ["Label": bundleID, "ProgramArguments": [exe], "RunAtLoad": true]
-            try? FileManager.default.createDirectory(atPath: (agentPath as NSString).deletingLastPathComponent,
-                                                     withIntermediateDirectories: true)
-            if let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
-                FileManager.default.createFile(atPath: agentPath, contents: data)
-            }
+            writeLoginItem()
         }
         render()
+    }
+    private func writeLoginItem() {
+        let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
+        let plist: [String: Any] = ["Label": bundleID, "ProgramArguments": [exe], "RunAtLoad": true]
+        try? FileManager.default.createDirectory(atPath: (agentPath as NSString).deletingLastPathComponent,
+                                                 withIntermediateDirectories: true)
+        if let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
+            FileManager.default.createFile(atPath: agentPath, contents: data)
+        }
+    }
+    // 以前在 dmg 里（或别的位置）开过自启的，记下的路径会失效；从正式位置启动时改成当前路径
+    private func repairLoginItem() {
+        guard loginEnabled, !runningFromTemporaryLocation, let exe = Bundle.main.executablePath,
+              let data = FileManager.default.contents(atPath: agentPath),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let old = (plist["ProgramArguments"] as? [String])?.first, old != exe else { return }
+        log("开机自启指向 \(old)，改为 \(exe)")
+        writeLoginItem()
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
@@ -939,8 +1032,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: 渲染图标和菜单
     private func render() {
-        if menuOpen && !busy && needsRender == false && menu.items.count > 0 {
-            needsRender = true       // 菜单打开时不重建（避免闪动），关闭后再刷新
+        if menuOpen {
+            // 菜单显示期间不重建：内容高度一变，菜单窗口会保持底边不动地缩放，顶上和菜单栏之间空出一截（或者往上顶）。
+            // 关闭后再刷新
+            needsRender = true
             updateIcon()
             return
         }
