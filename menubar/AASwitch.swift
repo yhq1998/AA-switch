@@ -36,16 +36,16 @@ final class SegmentRow: NSView {
     private let enabled: Bool
     private let onSelect: (Int) -> Void
     private var rects: [NSRect] = []
-    init(labels: [String], selected: Int?, enabled: Bool, segmentWidth: CGFloat, onSelect: @escaping (Int) -> Void) {
+    init(labels: [String], selected: Int?, enabled: Bool, segmentWidth: CGFloat, inset: CGFloat = 14, onSelect: @escaping (Int) -> Void) {
         self.labels = labels
         self.selected = selected
         self.enabled = enabled
         self.onSelect = onSelect
         super.init(frame: .zero)
         let height: CGFloat = 24
-        var x: CGFloat = 14   // 和普通菜单项的文字左对齐
+        var x = inset   // 菜单里 14：和普通菜单项的文字左对齐；窗口里 0
         for _ in labels { rects.append(NSRect(x: x, y: 4, width: segmentWidth, height: height)); x += segmentWidth }
-        frame = NSRect(x: 0, y: 0, width: x + 14, height: height + 8)
+        frame = NSRect(x: 0, y: 0, width: x + inset, height: height + 8)
         alphaValue = enabled ? 1 : 0.4
     }
     required init?(coder: NSCoder) { nil }
@@ -67,6 +67,7 @@ final class SegmentRow: NSView {
             (labels[i] as NSString).draw(at: NSPoint(x: r.midX - size.width / 2, y: r.midY - size.height / 2), withAttributes: attrs)
         }
     }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }   // 放在窗口里时，窗口不在前台也能一下点中
     override func mouseDown(with event: NSEvent) {}
     override func mouseUp(with event: NSEvent) {
         guard enabled else { return }
@@ -78,7 +79,7 @@ final class SegmentRow: NSView {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let codex = Product(
@@ -109,7 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var staleSessions: [String: [Int32]] = [:]  // 切换前就在运行、切换后仍活着的终端 / IDE 会话进程号（按产品名）
     private var menuOpen = false
     private var pendingLaunchReveal = false
-    private var showHiddenHint = false                  // 这次弹出的菜单顶上加一行“图标被挡住了”的说明
+    private var panel: NSWindow?                        // 从访达 / 启动台 / 聚焦搜索打开时显示的窗口，内容和菜单一样
+    private lazy var building = menu                    // render 正在往哪个菜单里加项（菜单本身，或给窗口用的临时菜单）
     private let revealNotification = Notification.Name(bundleID + ".reveal")
     private var needsRender = false
     private var products: [Product] { [codex, claude] }
@@ -463,7 +465,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // 菜单栏程序没有主菜单，⌘C / ⌘V / ⌘A 这类快捷键要靠“编辑”菜单转发；装一个不可见的即可
     private func installEditMenu() {
         let main = NSMenu()
-        let appItem = NSMenuItem(); appItem.submenu = NSMenu(); main.addItem(appItem)
+        // 窗口开着时程序在前台、有自己的菜单栏，⌘W / ⌘Q 要能用
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        appMenu.addItem(withTitle: "退出 \(appName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let appItem = NSMenuItem(); appItem.submenu = appMenu; main.addItem(appItem)
         let edit = NSMenu(title: "编辑")
         edit.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
         edit.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
@@ -529,7 +535,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: 再次打开（在访达 / 启动台 / 聚焦搜索里双击）时把菜单弹出来。
-    // 菜单栏放不下时，系统会把排在后面的图标藏到刘海后面，用户就以为程序没开；这时把同一个菜单弹在屏幕上方中间，顶上说明图标去哪了
+    // 菜单栏放不下时，排在后面的图标会被藏到刘海后面（或被菜单栏管理工具折叠），用户就以为程序没开；所以把同一个菜单弹在屏幕上方中间，顶上说明图标在哪
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         log("再次打开")
         revealMenu()
@@ -540,31 +546,127 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         revealMenu()
     }
     private func revealMenu() {
-        guard !menuOpen, NSApp.modalWindow == nil else { return }
-        DispatchQueue.main.async { [weak self] in   // 弹菜单会一直阻塞到菜单关闭，别卡住调用方
-            guard let self = self else { return }
-            let hidden = self.statusIconHidden
-            self.log("弹出菜单" + (hidden ? "（菜单栏图标被挡住，弹在屏幕中间）" : ""))
-            if !hidden, let button = self.statusItem.button {
-                button.performClick(nil)
-                return
-            }
-            self.showHiddenHint = true
-            NSApp.activate(ignoringOtherApps: true)
-            let screen = NSScreen.main ?? NSScreen.screens.first
-            let frame = screen?.visibleFrame ?? .zero
-            self.menu.popUp(positioning: nil, at: NSPoint(x: frame.midX - 160, y: frame.maxY - 40), in: nil)
-        }
+        guard NSApp.modalWindow == nil else { return }
+        DispatchQueue.main.async { [weak self] in self?.showWindow() }
     }
-    // 图标现在能不能看见：图标窗口不在屏幕上、被完全遮住，或者在有刘海的屏幕上落到了刘海右边界的左侧，都算看不见
-    private var statusIconHidden: Bool {
-        guard let window = statusItem.button?.window, window.isVisible, window.occlusionState.contains(.visible),
-              let screen = window.screen, screen.frame.intersects(window.frame) else { return true }
-        if #available(macOS 12.0, *), let right = screen.auxiliaryTopRightArea, screen.auxiliaryTopLeftArea != nil {
-            // auxiliaryTopRightArea 是相对这块屏幕左下角的坐标
-            return window.frame.minX - screen.frame.minX < right.minX
+
+    // MARK: 窗口：把菜单的内容原样摆进一个普通窗口（分组标题、切换开关、说明、按钮），顶上加一句图标在哪。
+    // 窗口开着时程序在 Dock 里显示图标（点 Dock 图标也会回到窗口），关掉后回到只在菜单栏
+    private func showWindow() {
+        if panel == nil {
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 400), styleMask: [.titled, .closable, .miniaturizable],
+                             backing: .buffered, defer: false)
+            w.title = appName
+            w.isReleasedWhenClosed = false
+            w.delegate = self
+            panel = w
         }
-        return false
+        guard let w = panel else { return }
+        let wasVisible = w.isVisible
+        refreshWindow()
+        if !wasVisible, let screen = NSScreen.main?.visibleFrame {   // 放在屏幕上方偏中间
+            w.setFrameTopLeftPoint(NSPoint(x: screen.midX - w.frame.width / 2, y: screen.maxY - screen.height * 0.12))
+        }
+        log("显示窗口")
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        w.makeKeyAndOrderFront(nil)
+    }
+    func windowWillClose(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === panel else { return }
+        NSApp.setActivationPolicy(.accessory)
+    }
+    private func refreshWindow() {
+        guard let w = panel else { return }
+        let items = NSMenu()
+        items.autoenablesItems = false
+        building = items
+        buildItems(forWindow: true)
+        building = menu
+        let content = windowContent(from: items)
+        let top = w.frame.maxY
+        w.contentView = content
+        w.setContentSize(content.fittingSize)
+        if w.isVisible { w.setFrameTopLeftPoint(NSPoint(x: w.frame.minX, y: top)) }   // 内容变高变矮时顶边不动
+    }
+    // 菜单项 → 窗口里的控件：不可点的项变文字，可点的变按钮（连着的几个排成一行），带勾的变复选框，子菜单变下拉按钮，分隔线照搬
+    private func windowContent(from items: NSMenu) -> NSView {
+        let width: CGFloat = 430
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 18, right: 16)
+        stack.widthAnchor.constraint(equalToConstant: width + 32).isActive = true
+        var buttonRow: NSStackView?
+        func button(_ i: NSMenuItem) -> NSButton {
+            let b = NSButton(title: i.title, target: i.target, action: i.action)
+            b.bezelStyle = .rounded
+            b.isEnabled = i.isEnabled
+            return b
+        }
+        for i in items.items {
+            let isPlainButton = i.view == nil && i.submenu == nil && !i.isSeparatorItem && i.action != nil && i.state == .off
+                && i.attributedTitle == nil
+            if !isPlainButton { buttonRow = nil }
+            if i.isSeparatorItem {
+                let line = NSBox()
+                line.boxType = .separator
+                stack.addArrangedSubview(line)
+                line.widthAnchor.constraint(equalToConstant: width).isActive = true
+                stack.setCustomSpacing(10, after: stack.arrangedSubviews[max(0, stack.arrangedSubviews.count - 2)])
+                stack.setCustomSpacing(10, after: line)
+            } else if let v = i.view {
+                i.view = nil   // 先从菜单项上摘下来：临时菜单释放时，菜单项会把自己的 view 从窗口里移走
+                v.translatesAutoresizingMaskIntoConstraints = false
+                v.widthAnchor.constraint(equalToConstant: v.frame.width).isActive = true
+                v.heightAnchor.constraint(equalToConstant: v.frame.height).isActive = true
+                stack.addArrangedSubview(v)
+            } else if let sub = i.submenu {
+                let pop = NSPopUpButton(frame: .zero, pullsDown: true)
+                let copy = sub.copy() as! NSMenu
+                copy.insertItem(withTitle: i.title + "…", action: nil, keyEquivalent: "", at: 0)   // 下拉按钮拿第一项当按钮文字
+                pop.menu = copy
+                pop.controlSize = .small
+                stack.addArrangedSubview(pop)
+            } else if i.action != nil && i.state == .on || i.action == #selector(toggleLogin) {
+                let box = NSButton(checkboxWithTitle: i.title, target: i.target, action: i.action)
+                box.state = i.state
+                stack.addArrangedSubview(box)
+            } else if isPlainButton {
+                if buttonRow == nil {
+                    let row = NSStackView()
+                    row.orientation = .horizontal
+                    row.spacing = 8
+                    stack.addArrangedSubview(row)
+                    buttonRow = row
+                }
+                buttonRow?.addArrangedSubview(button(i))
+            } else {
+                let text = i.attributedTitle.map { NSMutableAttributedString(attributedString: $0) } ?? NSMutableAttributedString(
+                    string: i.title, attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                                                  .foregroundColor: i.isEnabled ? NSColor.labelColor : NSColor.secondaryLabelColor])
+                let label = NSTextField(wrappingLabelWithString: "")
+                label.attributedStringValue = text
+                label.preferredMaxLayoutWidth = width - (i.image == nil ? 0 : 24)
+                label.isSelectable = false
+                var view: NSView = label
+                if let image = i.image {
+                    let icon = NSImageView(image: image)
+                    view = NSStackView(views: [icon, label])
+                    stack.setCustomSpacing(8, after: stack.arrangedSubviews.last ?? label)
+                }
+                if i.action != nil {   // 可点的说明行（比如“还没配置 API 地址，点击填写…”）
+                    let link = NSButton(title: "", target: i.target, action: i.action)
+                    link.isBordered = false
+                    link.attributedTitle = NSAttributedString(string: i.title, attributes: [
+                        .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.linkColor])
+                    view = link
+                }
+                stack.addArrangedSubview(view)
+            }
+        }
+        return stack
     }
 
     // MARK: 菜单打开时先用快速的 mode 命令刷新，再异步刷新完整状态
@@ -577,7 +679,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     func menuDidClose(_ menu: NSMenu) {
         menuOpen = false
-        if showHiddenHint { showHiddenHint = false; needsRender = true }
         if needsRender { render() }
     }
 
@@ -1113,6 +1214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: 渲染图标和菜单
     private func render() {
+        if panel?.isVisible == true { refreshWindow() }
         if menuOpen {
             // 菜单显示期间不重建：内容高度一变，菜单窗口会保持底边不动地缩放，顶上和菜单栏之间空出一截（或者往上顶）。
             // 关闭后再刷新
@@ -1123,10 +1225,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         needsRender = false
         updateIcon()
         menu.removeAllItems()
-        if showHiddenHint {
+        buildItems(forWindow: false)
+    }
+    private func buildItems(forWindow: Bool) {
+        let menu = building
+        if forWindow {
             let hint = NSMenuItem()
             hint.attributedTitle = NSAttributedString(
-                string: "菜单栏图标被挡住了（多半是刘海或图标太多）。\n按住 ⌘ 把它拖到靠右的位置，或者隐藏一些别的图标。",
+                string: "\(appName) 平时在屏幕右上角的菜单栏里，点图标就能切换。看不到图标的话，多半是被刘海挡住或被折叠了：按住 ⌘ 把它往右拖，或者退出一些别的菜单栏图标。",
                 attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor])
             hint.isEnabled = false
             menu.addItem(hint)
@@ -1167,6 +1273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // 一个产品的分组：带产品图标的标题、一行“账号 ⟷ API”开关（Claude 的开关同时管命令行和桌面应用）、小字的 API 地址、只在异常时出现的提示行；
     // 配置、重新应用和正常态的详细信息都收进“更多”子菜单，正常时不占地方
     private func renderSection(_ p: Product, toApi: Selector, configure: Selector, backups: Selector) {
+        let menu = building
         let m = mode[p.name] ?? "unknown"
         let header = add(p.name, enabled: false)
         header.attributedTitle = NSAttributedString(string: p.name, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
@@ -1194,7 +1301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             add(busyText, enabled: false)
         } else {
             let row = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            row.view = SegmentRow(labels: [p.accountTitle, "API"], selected: selected, enabled: !busy, segmentWidth: segmentWidth) { [weak self] i in
+            row.view = SegmentRow(labels: [p.accountTitle, "API"], selected: selected, enabled: !busy, segmentWidth: segmentWidth, inset: building === self.menu ? 14 : 0) { [weak self] i in
                 guard let self = self else { return }
                 let on = i == 1
                 self.menu.cancelTracking()
@@ -1261,7 +1368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @discardableResult
     private func add(_ title: String, _ action: Selector? = nil, enabled: Bool = true) -> NSMenuItem {
         let i = item(title, action, enabled: enabled)
-        menu.addItem(i)
+        building.addItem(i)
         return i
     }
     // 小字灰色的说明行；给了动作就可点
@@ -1336,6 +1443,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
+// 新的菜单栏图标默认排在最左边，刘海屏上最容易被挡住。第一次运行时让它排到靠右的位置（数值是离屏幕右边缘的距离），
+// 用户按住 ⌘ 拖过之后系统会记下新位置，这里不再动
+let iconPositionKey = "NSStatusItem Preferred Position Item-0"
+if UserDefaults.standard.object(forKey: iconPositionKey) == nil { UserDefaults.standard.set(250.0, forKey: iconPositionKey) }
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

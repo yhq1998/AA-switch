@@ -97,6 +97,6 @@ if [ -n "${NOTARY_PROFILE:-}" ]; then
   spctl --assess --type open --context context:primary-signature -v "$DMG" 2>&1 | tail -1
   echo "已生成并公证：$DMG"
 else
-  echo "已生成 $DMG（未公证；设置 NOTARY_PROFILE 可自动公证）"
+  echo "已生成 ${DMG}（未公证；设置 NOTARY_PROFILE 可自动公证）"
 fi
 cleanup_app
