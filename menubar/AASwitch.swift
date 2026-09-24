@@ -1032,28 +1032,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         return (url, nil)
     }
     // 用 key 探测地址：请求 models 接口。2xx 通过；401/403 是 key 不对；其他情况告诉用户但允许坚持保存
+    // 网关自己给的原因（key 无效、已过期、额度用完……）一并显示并记进日志，否则用户和诊断信息里都只看得到一个状态码
     private func probe(_ p: Product, url: String, key: String, headers: String) -> (ok: Bool, message: String?, blocking: Bool) {
         let endpoint = p.resource == "codex-mode" ? url + "/models" : url + "/v1/models"
-        var args = ["-s", "-o", "/dev/null", "-m", "12", "-w", "%{http_code}", endpoint, "-H", "Authorization: Bearer " + key]
+        var args = ["-s", "-m", "12", "-w", "\n%{http_code}", endpoint, "-H", "Authorization: Bearer " + key]
         for pair in headers.split(separator: ",") {
             let kv = pair.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
             if kv.count == 2, !kv[0].isEmpty { args += ["-H", kv[0] + ": " + kv[1]] }
         }
         let (code, out) = shell("/usr/bin/curl", args)
-        let status = Int(out.trimmingCharacters(in: .whitespacesAndNewlines).suffix(3)) ?? 0
+        let trimmed = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        let status = Int(trimmed.suffix(3)) ?? 0
+        let said = status >= 300 ? gatewayMessage(String(trimmed.dropLast(3))) : nil
+        log("\(p.name) 配置校验 \(endpoint) → " + (code != 0 || status == 0 ? "连不上（curl 退出码 \(code)）" : "HTTP \(status)") + (said.map { "，网关：\($0)" } ?? ""))
         if code != 0 || status == 0 { return (false, "连不上 \(endpoint)（超时或域名不对）。", false) }
+        let reason = said.map { "网关返回：\($0)。" } ?? ""
         switch status {
         case 200..<300: return (true, nil, false)
-        case 401, 403: return (false, "这个 key 在 \(url) 上无效（HTTP \(status)）。每个网关的 key 不通用，请填该地址对应的 key。", true)
-        case 404: return (false, "地址能连上，但 \(endpoint) 不存在（HTTP 404），地址的路径可能不对。", false)
-        default: return (false, "地址返回了 HTTP \(status)，可能不是一个兼容的网关。", false)
+        case 401, 403: return (false, "这个 key 在 \(url) 上被拒绝（HTTP \(status)）。\(reason)每个网关的 key 不通用，请填该地址对应的 key；如果确认没填错，可能是 key 已过期、被禁用或额度用完，请到网关后台看一下。", true)
+        case 404: return (false, "地址能连上，但 \(endpoint) 不存在（HTTP 404），地址的路径可能不对。\(reason)", false)
+        default: return (false, "地址返回了 HTTP \(status)，可能不是一个兼容的网关。\(reason)", false)
         }
     }
-    private func showConfigureForm(_ p: Product, baseURL: String, headers: String, error: String?, then: ((Bool) -> Void)? = nil) {
+    // 从出错响应里取网关的说明：{"error":{"message":…}}、{"error":"…"}、{"message":…}；去掉请求 ID，遮住里面带的 key 片段
+    private func gatewayMessage(_ body: String) -> String? {
+        guard let obj = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any] else { return nil }
+        let nested = (obj["error"] as? [String: Any])?["message"] as? String
+        guard var text = nested ?? obj["error"] as? String ?? obj["message"] as? String else { return nil }
+        text = text.replacingOccurrences(of: #"\s*[(（]\s*request id[^)）]*[)）]"#, with: "", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"sk-[A-Za-z0-9_*\-]+"#, with: "sk-…", options: .regularExpression)
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.count > 200 { text = String(text.prefix(200)) + "…" }
+        return text.isEmpty ? nil : text
+    }
+    // key：出错后重新弹表单时带上用户刚填的，不要换成钥匙串里的（新地址通常还没存过，会把刚粘贴的 key 清空）
+    private func showConfigureForm(_ p: Product, baseURL: String, headers: String, key typedKey: String? = nil, error: String?, then: ((Bool) -> Void)? = nil) {
         let alert = NSAlert()
         alert.messageText = "配置 \(p.name) API"
         alert.informativeText = error ?? (p.urlHint + " key 只保存在 macOS 钥匙串里，按地址域名保存，Codex 和 Claude Code 用同一个网关时共用一个 key。换地址时记得把 key 也换成该地址对应的。")
-        if error != nil { alert.alertStyle = .warning }
+        if let error = error { alert.alertStyle = .warning; log("\(p.name) 配置表单提示：\(error)") }
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 150))
         func row(_ title: String, _ field: NSTextField, y: CGFloat, height: CGFloat = 24) {
             let label = NSTextField(labelWithString: title)
@@ -1073,8 +1090,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         keyField.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         keyField.cell?.wraps = true; keyField.cell?.isScrollable = false
         keyField.cell?.lineBreakMode = .byCharWrapping
-        let savedKey = baseURL.isEmpty ? "" : run(p, ["key", baseURL]).out.trimmingCharacters(in: .whitespacesAndNewlines)
-        keyField.stringValue = savedKey
+        let savedKey = typedKey != nil || baseURL.isEmpty ? "" : run(p, ["key", baseURL]).out.trimmingCharacters(in: .whitespacesAndNewlines)
+        keyField.stringValue = typedKey ?? savedKey
         keyField.placeholderString = "sk-…"
         row("API 地址", urlField, y: 120); row("额外请求头", headerField, y: 80); row("API key", keyField, y: 8, height: 56)
         urlField.nextKeyView = headerField; headerField.nextKeyView = keyField; keyField.nextKeyView = urlField
@@ -1083,11 +1100,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         alert.addButton(withTitle: "取消")
         alert.window.initialFirstResponder = urlField
         NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { then?(false); return }
+        guard alert.runModal() == .alertFirstButtonReturn else { log("\(p.name) 配置表单：取消"); then?(false); return }
         let hdr = headerField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = keyField.stringValue.components(separatedBy: .whitespacesAndNewlines).joined()   // key 里不会有空白；粘贴带进来的换行一并去掉
+        // key 里不会有空白和不可见字符；粘贴带进来的换行、零宽空格一并去掉
+        let key = String(String.UnicodeScalarView(keyField.stringValue.unicodeScalars.filter {
+            !CharacterSet.whitespacesAndNewlines.contains($0) && !CharacterSet.controlCharacters.contains($0)
+        }))
+        let retype: String? = key.isEmpty ? nil : key
         let (url, urlError) = normalizeURL(urlField.stringValue, for: p)
-        if let urlError = urlError { showConfigureForm(p, baseURL: url, headers: hdr, error: urlError, then: then); return }
+        if let urlError = urlError { showConfigureForm(p, baseURL: url, headers: hdr, key: retype, error: urlError, then: then); return }
+        if !key.unicodeScalars.allSatisfy({ $0.isASCII }) {
+            showConfigureForm(p, baseURL: url, headers: hdr, key: retype, error: "API key 里有中文或全角字符，可能把 key 前后的文字一起复制进来了，请只粘贴 key 本身。", then: then); return
+        }
         // key 留空时看这个地址有没有存过（Codex 还会尝试当前在用的 / 旧版条目）
         let keyForProbe = key.isEmpty ? (run(p, ["find-key", url]).code == 0 ? run(p, ["key", url]).out.trimmingCharacters(in: .whitespacesAndNewlines) : "") : key
         if keyForProbe.isEmpty {
@@ -1095,19 +1119,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         let check = probe(p, url: url, key: keyForProbe, headers: hdr)
         if !check.ok {
-            if check.blocking { showConfigureForm(p, baseURL: url, headers: hdr, error: check.message, then: then); return }
+            if check.blocking {
+                // 最常见的情况：改了地址，但 key 框里还是原地址回填的那个
+                let oldHost = URL(string: baseURL)?.host ?? baseURL
+                let keptOld = !savedKey.isEmpty && key == savedKey && URL(string: url)?.host != oldHost
+                let hint = keptOld ? "\n\n你改了地址，但 API key 还是原来 \(oldHost) 的那个，请换成新地址对应的 key。" : ""
+                showConfigureForm(p, baseURL: url, headers: hdr, key: retype, error: (check.message ?? "") + hint, then: then); return
+            }
             let ask = NSAlert()
             ask.messageText = "地址校验没有通过"
             ask.informativeText = (check.message ?? "") + "\n\n可以返回修改，也可以坚持保存。"
             ask.alertStyle = .warning
             ask.addButton(withTitle: "返回修改")
             ask.addButton(withTitle: "仍然保存")
-            if ask.runModal() == .alertFirstButtonReturn { showConfigureForm(p, baseURL: url, headers: hdr, error: nil, then: then); return }
+            if ask.runModal() == .alertFirstButtonReturn { showConfigureForm(p, baseURL: url, headers: hdr, key: retype, error: nil, then: then); return }
+            log("\(p.name) 配置校验没通过，用户选择仍然保存")
         }
         let result = run(p, ["configure"],
                          extraEnv: [p.configureEnvPrefix + "_BASE_URL": url, p.configureEnvPrefix + "_HEADERS": hdr, p.configureEnvPrefix + "_KEY_STDIN": "1"],
                          input: key + "\n")
-        if result.code != 0 { showConfigureForm(p, baseURL: url, headers: hdr, error: result.err.replacingOccurrences(of: "错误：", with: ""), then: then); return }
+        if result.code != 0 { showConfigureForm(p, baseURL: url, headers: hdr, key: retype, error: result.err.replacingOccurrences(of: "错误：", with: ""), then: then); return }
         log("\(p.name) 配置已保存：\(url)")
         if let then = then {   // 从切换流程进来的：保存完接着切，不再弹“已保存”
             refresh()
