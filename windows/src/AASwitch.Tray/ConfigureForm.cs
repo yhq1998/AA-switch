@@ -29,7 +29,7 @@ sealed class ConfigureForm : Form
         ClientSize = new Size(520, 298);
         AcceptButton = _save; CancelButton = _cancel;
 
-        _message.SetBounds(16, 12, 488, 112);   // 网关原因加上换地址的提醒，最长五六行 _message.Text = _hint;
+        _message.SetBounds(16, 12, 488, 112); _message.Text = _hint;   // 高度按最长的出错提示（网关原因 + 换地址的提醒）留
         Controls.Add(_message);
         AddRow("API 地址", _url, 132, p.UrlPlaceholder);
         AddRow("额外请求头", _headers, 168, "名称=值，多个用逗号分隔；通常留空");
