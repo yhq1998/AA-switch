@@ -108,6 +108,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var busyProduct = ""                        // 正在切换的产品名
     private var staleSessions: [String: [Int32]] = [:]  // 切换前就在运行、切换后仍活着的终端 / IDE 会话进程号（按产品名）
     private var menuOpen = false
+    private var pendingLaunchReveal = false
+    private var showHiddenHint = false                  // 这次弹出的菜单顶上加一行“图标被挡住了”的说明
+    private let revealNotification = Notification.Name(bundleID + ".reveal")
     private var needsRender = false
     private var products: [Product] { [codex, claude] }
 
@@ -115,7 +118,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if offerInstallFromDiskImage() { return }   // 要放在单实例检查前面：装新版时得先把已经在跑的旧版关掉
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .filter { $0 != NSRunningApplication.current }
-        if !others.isEmpty { NSApp.terminate(nil); return }
+        if !others.isEmpty {
+            // 已经在运行（多半是图标被刘海挡住、用户以为没开）：让正在运行的那个把菜单弹出来，自己退出
+            DistributedNotificationCenter.default().postNotificationName(revealNotification, object: nil, userInfo: nil, deliverImmediately: true)
+            NSApp.terminate(nil); return
+        }
+        DistributedNotificationCenter.default().addObserver(self, selector: #selector(revealFromOtherInstance), name: revealNotification, object: nil)
+        // 开机自启（launchd 按 LaunchAgent 启动时 XPC_SERVICE_NAME 就是 plist 的 Label）和应用内更新后的重开都安静地待在菜单栏；
+        // 用户手动打开的，状态读完后把菜单弹出来，让人知道它开了、在哪
+        let env = ProcessInfo.processInfo.environment
+        pendingLaunchReveal = env["XPC_SERVICE_NAME"] != bundleID && !CommandLine.arguments.contains("--quiet")
         installEditMenu()
         menu.delegate = self
         menu.autoenablesItems = false
@@ -292,13 +304,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 guard let launcher = launcher else { return }
                 self.log("更新包校验通过，退出并由 \(launcher.path) 完成替换")
-                let p = Process()
-                p.executableURL = URL(fileURLWithPath: "/bin/bash")
-                p.arguments = [launcher.path]
-                try? p.run()
+                guard self.spawnDetached("exec /bin/bash \(self.quote(launcher.path))") else {
+                    self.log("更新失败：启动替换脚本失败")
+                    self.render()
+                    return
+                }
                 NSApp.terminate(nil)
             }
         }.resume()
+    }
+    // 退出前交给后台脚本收尾（替换自己、推出 dmg、重新打开）。脚本放到新的会话里跑：
+    // 开机自启时本进程是 launchd 按 LaunchAgent 启动的，主进程一退出，launchd 会把同一进程组里的子进程一起杀掉，脚本就半路没了
+    private func spawnDetached(_ script: String) -> Bool {
+        var attr: posix_spawnattr_t?
+        posix_spawnattr_init(&attr)
+        defer { posix_spawnattr_destroy(&attr) }
+        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID))
+        let args = ["/bin/bash", "-c", script].map { strdup($0) } + [nil]
+        defer { args.forEach { free($0) } }
+        var pid: pid_t = 0
+        return posix_spawn(&pid, "/bin/bash", nil, &attr, args, environ) == 0
     }
     private struct UpdateError: LocalizedError { let errorDescription: String? }
     private func shell(_ cmd: String, _ args: [String]) -> (Int32, String) {
@@ -343,11 +368,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let script = work.appendingPathComponent("install.sh")
         try """
         #!/bin/bash
+        # 旧版先挪到一边，新版放好并且真的跑起来了才删；任何一步不行就把旧版放回去重新打开，不会两个版本都没了
+        target=\(quote(target)); new=\(quote(newApp.path)); work=\(quote(work.path)); old="$work/old.app"; logf=\(quote(logPath))
+        say() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) 更新脚本：$*" >> "$logf"; }
+        restore() { say "$1，恢复旧版"; rm -rf "$target"; mv "$old" "$target" && open -a "$target"; exit 1; }
         for _ in $(seq 1 150); do kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null || break; sleep 0.2; done
-        rm -rf \(quote(target)) && mv \(quote(newApp.path)) \(quote(target)) || exit 1
-        xattr -dr com.apple.quarantine \(quote(target)) 2>/dev/null
-        open -a \(quote(target))
-        rm -rf \(quote(work.path))
+        mv "$target" "$old" || { say "挪开旧版失败"; open -a "$target"; exit 1; }
+        mv "$new" "$target" || restore "放入新版失败"
+        xattr -dr com.apple.quarantine "$target" 2>/dev/null
+        open -a "$target" --args --quiet || restore "打开新版失败"
+        sleep 8
+        pgrep -f "$target/Contents/MacOS/" >/dev/null || restore "新版启动后没有在运行"
+        say "已更新到 \(newVersion)"
+        rm -rf "$work"
         """.write(to: script, atomically: true, encoding: .utf8)
         return script
     }
@@ -402,10 +435,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         \(volume.isEmpty ? "" : "hdiutil detach \(quote(volume)) -quiet 2>/dev/null")
         open -a \(quote(dest))
         """
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/bash")
-        p.arguments = ["-c", script]
-        try? p.run()
+        _ = spawnDetached(script)
         log("已装到 \(dest)，退出并从那里重新打开" + (volume.isEmpty ? "" : "，推出 \(volume)"))
         NSApp.terminate(nil)
         return true
@@ -449,6 +479,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let stamp = ISO8601DateFormatter().string(from: Date())
         let line = "\(stamp) \(message)\n"
         try? FileManager.default.createDirectory(atPath: codex.home, withIntermediateDirectories: true)
+        // 超过 1MB 就把当前日志改名成 .1（覆盖更早的那份），最多占 2MB
+        if let size = (try? FileManager.default.attributesOfItem(atPath: logPath))?[.size] as? Int, size > 1_000_000 {
+            try? FileManager.default.removeItem(atPath: logPath + ".1")
+            try? FileManager.default.moveItem(atPath: logPath, toPath: logPath + ".1")
+        }
         if let handle = FileHandle(forWritingAtPath: logPath) {
             handle.seekToEndOfFile(); handle.write(Data(line.utf8)); handle.closeFile()
         } else {
@@ -493,6 +528,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         scriptVersion[p.name] = version(of: fm.contents(atPath: p.script), key: p.versionKey).map(String.init).joined(separator: ".")
     }
 
+    // MARK: 再次打开（在访达 / 启动台 / 聚焦搜索里双击）时把菜单弹出来。
+    // 菜单栏放不下时，系统会把排在后面的图标藏到刘海后面，用户就以为程序没开；这时把同一个菜单弹在屏幕上方中间，顶上说明图标去哪了
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        log("再次打开")
+        revealMenu()
+        return false
+    }
+    @objc private func revealFromOtherInstance() {
+        log("另一份程序被打开，已退出，这边弹出菜单")
+        revealMenu()
+    }
+    private func revealMenu() {
+        guard !menuOpen, NSApp.modalWindow == nil else { return }
+        DispatchQueue.main.async { [weak self] in   // 弹菜单会一直阻塞到菜单关闭，别卡住调用方
+            guard let self = self else { return }
+            let hidden = self.statusIconHidden
+            self.log("弹出菜单" + (hidden ? "（菜单栏图标被挡住，弹在屏幕中间）" : ""))
+            if !hidden, let button = self.statusItem.button {
+                button.performClick(nil)
+                return
+            }
+            self.showHiddenHint = true
+            NSApp.activate(ignoringOtherApps: true)
+            let screen = NSScreen.main ?? NSScreen.screens.first
+            let frame = screen?.visibleFrame ?? .zero
+            self.menu.popUp(positioning: nil, at: NSPoint(x: frame.midX - 160, y: frame.maxY - 40), in: nil)
+        }
+    }
+    // 图标现在能不能看见：图标窗口不在屏幕上、被完全遮住，或者在有刘海的屏幕上落到了刘海右边界的左侧，都算看不见
+    private var statusIconHidden: Bool {
+        guard let window = statusItem.button?.window, window.isVisible, window.occlusionState.contains(.visible),
+              let screen = window.screen, screen.frame.intersects(window.frame) else { return true }
+        if #available(macOS 12.0, *), let right = screen.auxiliaryTopRightArea, screen.auxiliaryTopLeftArea != nil {
+            // auxiliaryTopRightArea 是相对这块屏幕左下角的坐标
+            return window.frame.minX - screen.frame.minX < right.minX
+        }
+        return false
+    }
+
     // MARK: 菜单打开时先用快速的 mode 命令刷新，再异步刷新完整状态
     func menuWillOpen(_ menu: NSMenu) {
         if !busy { readModes() }
@@ -503,6 +577,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     func menuDidClose(_ menu: NSMenu) {
         menuOpen = false
+        if showHiddenHint { showHiddenHint = false; needsRender = true }
         if needsRender { render() }
     }
 
@@ -591,6 +666,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 for (k, v) in stillStale { self.staleSessions[k] = v }
                 self.render()
                 self.maybeShowOnboarding()
+                if self.pendingLaunchReveal && !self.onboardingShown {
+                    self.pendingLaunchReveal = false
+                    self.revealMenu()
+                }
             }
         }
     }
@@ -624,7 +703,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
     private func maybeShowOnboarding() {
-        guard !onboardingShown, !UserDefaults.standard.bool(forKey: "onboardingDone"), !busy else { return }
+        guard !onboardingShown, !UserDefaults.standard.bool(forKey: "onboardingDone"), !busy, !menuOpen else { return }
         let targets = products.filter { !["missing", "absent", "unknown"].contains(mode[$0.name] ?? "unknown") && statusLines[$0.name] != nil }
         guard !targets.isEmpty else { return }
         onboardingShown = true
@@ -980,7 +1059,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     private func writeLoginItem() {
         let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
-        let plist: [String: Any] = ["Label": bundleID, "ProgramArguments": [exe], "RunAtLoad": true]
+        // AbandonProcessGroup：退出时别让 launchd 顺手杀掉交给后台的收尾脚本（见 spawnDetached）
+        let plist: [String: Any] = ["Label": bundleID, "ProgramArguments": [exe], "RunAtLoad": true, "AbandonProcessGroup": true]
         try? FileManager.default.createDirectory(atPath: (agentPath as NSString).deletingLastPathComponent,
                                                  withIntermediateDirectories: true)
         if let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
@@ -992,8 +1072,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard loginEnabled, !runningFromTemporaryLocation, let exe = Bundle.main.executablePath,
               let data = FileManager.default.contents(atPath: agentPath),
               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let old = (plist["ProgramArguments"] as? [String])?.first, old != exe else { return }
-        log("开机自启指向 \(old)，改为 \(exe)")
+              let old = (plist["ProgramArguments"] as? [String])?.first,
+              old != exe || plist["AbandonProcessGroup"] as? Bool != true else { return }
+        log("更新开机自启：\(old) → \(exe)")
         writeLoginItem()
     }
 
@@ -1042,6 +1123,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         needsRender = false
         updateIcon()
         menu.removeAllItems()
+        if showHiddenHint {
+            let hint = NSMenuItem()
+            hint.attributedTitle = NSAttributedString(
+                string: "菜单栏图标被挡住了（多半是刘海或图标太多）。\n按住 ⌘ 把它拖到靠右的位置，或者隐藏一些别的图标。",
+                attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor])
+            hint.isEnabled = false
+            menu.addItem(hint)
+            menu.addItem(.separator())
+        }
         renderSection(codex, toApi: #selector(codexToApi), configure: #selector(configureCodex), backups: #selector(openCodexBackups))
         menu.addItem(.separator())
         renderSection(claude, toApi: #selector(claudeToApi), configure: #selector(configureClaude), backups: #selector(openClaudeBackups))
