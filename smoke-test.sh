@@ -51,6 +51,7 @@ cat > "$T/bin/pgrep" <<'EOF'
 # codex_until 里是个时间戳，到点之前算有 codex 进程（模拟应用自带的子进程比主进程晚退）
 case "${2:-}" in
   Codex) [ -f "$SMOKE_PROC/app" ] ;;
+  Claude) [ -f "$SMOKE_PROC/claude_app" ] ;;
   codex)
     [ -f "$SMOKE_PROC/codex_forever" ] && exit 0
     [ -f "$SMOKE_PROC/codex_until" ] && [ "$(date +%s)" -lt "$(cat "$SMOKE_PROC/codex_until")" ] ;;
@@ -246,6 +247,18 @@ cp "$T/settings.good" "$SETTINGS"
 A="$CLAUDE_DESKTOP_DATA_DIR/claude-code-sessions/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222"
 B="$CLAUDE_DESKTOP_DATA_DIR-3p/claude-code-sessions/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444"
 mkdir -p "$A" "$B"; echo '{}' > "$A/local_aaa.json"; echo '{}' > "$B/local_bbb.json"
+# Cowork：账号模式两条会话（ccc、ddd），网关模式一条（eee）；会话里的路径都指向自己所在的位置
+CA="$CLAUDE_DESKTOP_DATA_DIR/local-agent-mode-sessions/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222"
+CB="$CLAUDE_DESKTOP_DATA_DIR-3p/local-agent-mode-sessions/33333333/00000000"
+dashes() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '-'; }
+cowork() {  # cowork 目录 名字 lastActivityAt 对话内容
+  local d="$1/local_$2" p; p="$(dashes "$1/local_$2/outputs")"
+  mkdir -p "$d/outputs" "$d/.claude/projects/$p"
+  printf '{ "sessionId": "local_%s", "cwd": "%s/outputs", "lastActivityAt": %s }\n' "$2" "$d" "$3" > "$d.json"
+  printf '{ "cwd": "%s/outputs", "text": "%s" }\n' "$d" "$4" > "$d/.claude/projects/$p/chat.jsonl"
+  printf '%s\n' "$d" > "$d/audit.jsonl"; echo "产物" > "$d/outputs/result.txt"
+}
+cowork "$CA" ccc 100 "ccc 第一轮"; cowork "$CA" ddd 100 "ddd 第一轮"; cowork "$CB" eee 100 "eee 第一轮"
 run claude desktop-mode; ok "desktop-mode"; eq "桌面应用一开始是 account" "$OUT" account
 run claude desktop gateway; ok "桌面应用切到网关"
 run claude desktop-mode; eq "切完是 gateway" "$OUT" gateway
@@ -257,6 +270,34 @@ eq "带 key 的文件权限是 600" "$(stat -f %Lp "$ENTRY" 2>/dev/null)" 600
 [ -f "$A/local_bbb.json" ] && [ -f "$B/local_aaa.json" ] && pass || fail "两边的会话列表没有互相补齐"
 run claude desktop account; ok "桌面应用切回账号"
 run claude desktop-mode; eq "切完是 account" "$OUT" account
+
+# Cowork：切到网关时互相补齐，路径改到新位置，对话记录目录跟着改名，签名的 audit.jsonl 和产物原样
+[ -f "$CB/local_ccc.json" ] && [ -f "$CB/local_ddd.json" ] && [ -f "$CA/local_eee.json" ] && pass || fail "两边的 Cowork 会话没有互相补齐"
+eq "复制过去的 cwd 指向新位置" "$(json "$CB/local_ccc.json" cwd)" "$CB/local_ccc/outputs"
+has "对话记录里的路径改到新位置" "$(cat "$CB/local_ccc/.claude/projects/$(dashes "$CB/local_ccc/outputs")/chat.jsonl" 2>/dev/null)" "\"cwd\": \"$CB/local_ccc/outputs\""
+eq "audit.jsonl 原样复制" "$(cat "$CB/local_ccc/audit.jsonl" 2>/dev/null)" "$CA/local_ccc"
+eq "产物原样复制" "$(cat "$CB/local_ccc/outputs/result.txt" 2>/dev/null)" "产物"
+eq "反方向也改了路径" "$(json "$CA/local_eee.json" cwd)" "$CA/local_eee/outputs"
+# 网关模式下接着聊 ccc（变新），切回账号时账号那份被更新，旧的进了备份
+cowork "$CB" ccc 200 "ccc 第二轮"
+run claude desktop sync; ok "desktop sync（只有一边变新）"
+eq "账号那份更新成新的" "$(json "$CA/local_ccc.json" lastActivityAt)" 200
+has "账号那份的对话记录是新的、路径是账号这边的" "$(cat "$CA/local_ccc/.claude/projects/$(dashes "$CA/local_ccc/outputs")/chat.jsonl" 2>/dev/null)" "\"cwd\": \"$CA/local_ccc/outputs\", \"text\": \"ccc 第二轮\""
+[ -n "$(find "$CLAUDE_CONFIG_DIR/claude-mode-backups" -path '*/cowork/*' -name local_ccc.json 2>/dev/null | head -n1)" ] && pass || fail "被覆盖的旧会话没有进备份"
+# 两边都接着聊了 ddd：冲突，不动
+cowork "$CA" ddd 300 "ddd 账号这边"; cowork "$CB" ddd 301 "ddd 网关这边"
+run claude desktop sync; ok "desktop sync（两边都变新）"; has "冲突说清楚了" "$ERR" "没法合并"
+eq "冲突时账号那份没被覆盖" "$(json "$CA/local_ddd.json" lastActivityAt)" 300
+eq "冲突时网关那份没被覆盖" "$(json "$CB/local_ddd.json" lastActivityAt)" 301
+# 在网关模式下删掉 eee：不再从账号那边补回去
+rm -rf "$CB/local_eee" "$CB/local_eee.json"
+run claude desktop sync; ok "desktop sync（一边删了）"
+[ ! -e "$CB/local_eee.json" ] && [ -f "$CA/local_eee.json" ] && pass || fail "删掉的 Cowork 会话被补回去了，或另一边的被删了"
+# 桌面应用开着时手动 sync 不碰 Cowork
+touch "$SMOKE_PROC/claude_app"; cowork "$CA" fff 100 "fff"
+run claude desktop sync; ok "应用开着时 desktop sync"; has "说明了为什么跳过" "$ERR" "退出后才能同步"
+[ ! -e "$CB/local_fff.json" ] && pass || fail "应用开着时同步了 Cowork 会话"
+rm -f "$SMOKE_PROC/claude_app"
 
 echo
 if [ "$FAILED" -gt 0 ]; then echo "冒烟测试没有通过：$FAILED 项失败，$PASSED 项通过。" >&2; exit 1; fi

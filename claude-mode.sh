@@ -3,13 +3,14 @@
 #   Claude 桌面应用里的 Code 标签不看 settings.json：它启动会话时注入自己的 OAuth token，引擎在这种入口下强制使用该 token
 #   （实测，见 DEVELOPMENT.md）。让它走网关的唯一途径是把整个桌面应用切到第三方推理模式（desktop gateway 命令），
 #   那是桌面应用级别的开关，会重启应用，且网关模式用独立的数据目录。侧边栏的会话列表按数据目录各存一份（每个会话一个
-#   local_<id>.json，指向共享的 ~/.claude/projects 记录），切换时脚本把两边互相补齐，所以两种模式下都能看到全部会话。
+#   local_<id>.json，指向共享的 ~/.claude/projects 记录），切换时脚本把两边互相补齐，所以两种模式下都能看到全部会话；
+#   Cowork 会话也一样，只是它的记录不共享，要整份复制过去（见 desktop_sync_cowork）。
 #
 #   claude-mode api          切到自定义 API：把网关地址和 key 写进 ~/.claude/settings.json 的 env 块（新会话立即生效）
 #   claude-mode account      切回 Claude 账号：从 env 块删掉网关地址和 key（账号登录态一直都在，不用重新登录）
 #   claude-mode desktop gateway   Claude 桌面应用（Code 标签）也走网关：写入桌面应用的第三方推理配置并重启它
 #   claude-mode desktop account   Claude 桌面应用切回账号：重启它
-#   claude-mode desktop sync      把账号模式和网关模式两边的 Code 会话列表互相补齐（切换时会自动做，这是手动触发）
+#   claude-mode desktop sync      把账号模式和网关模式两边的 Code 会话列表互相补齐、Cowork 会话互相同步（切换时会自动做，这是手动触发）
 #   claude-mode desktop-mode 只输出一个词 gateway / account / absent（桌面应用当前走哪边），供程序读取
 #   claude-mode status       查看当前模式（不显示 key）
 #   claude-mode configure    设置或修改 API 地址、额外请求头和 key（图形界面可用环境变量非交互传入，见下）
@@ -38,7 +39,7 @@
 #   非交互配置：CLAUDE_MODE_BASE_URL、CLAUDE_MODE_HEADERS（名称=值，逗号分隔）、CLAUDE_MODE_KEY_STDIN=1（从标准输入读
 #   key，可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。
 set -eu
-CLAUDE_MODE_VERSION="1.2.4"
+CLAUDE_MODE_VERSION="1.3.0"
 
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS="$CLAUDE_HOME/settings.json"
@@ -53,7 +54,7 @@ DESKTOP_APP="Claude"
 
 say() { echo "$*" >&2; }
 die() { echo "错误：$*" >&2; exit 1; }
-usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 # ---------- 配置文件（key=value，不会被 source 执行） ----------
 conf_get() { if [ -f "$CONF" ]; then sed -n "s/^$1=//p" "$CONF" | head -n1; fi; }
@@ -278,13 +279,18 @@ desktop_mode() {  # gateway | account | absent
   if [ "$(env_field "$info" deployment)" = 3p ] && [ "$(env_field "$info" provider)" = gateway ]; then echo gateway; else echo account; fi
 }
 desktop_running() { pgrep -x "$DESKTOP_APP" >/dev/null 2>&1; }
-desktop_restart() {  # 桌面应用在运行才重启；没开着就只改配置，下次打开生效
-  desktop_running || { say "${DESKTOP_APP} 没有在运行，下次打开时生效。"; return 0; }
+desktop_quit() {  # 桌面应用在运行就退出它，DESKTOP_WAS_RUNNING=1；没开着就什么都不做
+  DESKTOP_WAS_RUNNING=0
+  desktop_running || return 0
+  DESKTOP_WAS_RUNNING=1
   say "正在退出 ${DESKTOP_APP}…"
   osascript -e "tell application \"$DESKTOP_APP\" to quit" >/dev/null 2>&1 || true
   for _ in $(seq 1 100); do desktop_running || break; sleep 0.2; done   # 最多等 20 秒
   if desktop_running; then die "$DESKTOP_APP 没有退出，请手动 ⌘Q 后重新打开。"; fi
   sleep 0.5
+}
+desktop_reopen() {  # 配合 desktop_quit：原来开着才重开；没开着就只改配置，下次打开生效
+  if [ "$DESKTOP_WAS_RUNNING" != 1 ]; then say "${DESKTOP_APP} 没有在运行，下次打开时生效。"; return 0; fi
   if [ "${CLAUDE_MODE_NO_REOPEN:-}" != 1 ]; then open -a "$DESKTOP_APP" >/dev/null 2>&1 || say "请手动打开 ${DESKTOP_APP}。"; fi
 }
 desktop_sessions_dir() {  # desktop_sessions_dir <数据目录> [账号 uuid] [组织 uuid]：该 profile 的 Code 会话记录目录；找不到输出空
@@ -300,9 +306,12 @@ desktop_sessions_dir() {  # desktop_sessions_dir <数据目录> [账号 uuid] [�
   done
   [ -n "$best" ] && printf '%s' "$best"
 }
+oauth_ids() {  # 账号模式的 "账号uuid 组织uuid"（取自 ~/.claude.json 的 oauthAccount），取不到输出空
+  osascript -l JavaScript -e 'ObjC.import("Foundation"); const s=$.NSString.stringWithContentsOfFileEncodingError($("'"$HOME/.claude.json"'"),$.NSUTF8StringEncoding,null); if (s.isNil()) ""; else { const o=JSON.parse(ObjC.unwrap(s)).oauthAccount||{}; (o.accountUuid||"")+" "+(o.organizationUuid||"") }' 2>/dev/null || true
+}
 desktop_sync_sessions() {  # 两个 profile 的会话记录互相补齐：只补缺的，不覆盖，目标已标记 deleted_ 的不补
   local a b ids acct org src dst f name id n=0
-  ids="$(osascript -l JavaScript -e 'ObjC.import("Foundation"); const s=$.NSString.stringWithContentsOfFileEncodingError($("'"$HOME/.claude.json"'"),$.NSUTF8StringEncoding,null); if (s.isNil()) ""; else { const o=JSON.parse(ObjC.unwrap(s)).oauthAccount||{}; (o.accountUuid||"")+" "+(o.organizationUuid||"") }' 2>/dev/null || true)"
+  ids="$(oauth_ids)"
   acct="${ids%% *}"; org="${ids#* }"; [ "$org" = "$ids" ] && org=""
   a="$(desktop_sessions_dir "$DESKTOP_DATA" "$acct" "$org")"
   b="$(desktop_sessions_dir "${DESKTOP_DATA}-3p")"
@@ -323,6 +332,148 @@ desktop_sync_sessions() {  # 两个 profile 的会话记录互相补齐：只补
   desktop_json sync-trusted "$DESKTOP_DATA/claude_desktop_config.json" >/dev/null 2>&1 || true
   say "会话列表已同步（补齐 ${n} 条）。"
 }
+# Cowork 会话：<数据目录>/local-agent-mode-sessions/<账号>/<组织>/ 下每个会话一个 local_<id>.json 加一个同名目录（对话记录在
+#   目录里的 .claude/projects/<按路径命名>/，还有 outputs、uploads、audit.jsonl）。和 Code 标签不同，记录不共享，所以整份复制，
+#   并把里面指向原位置的绝对路径（以及按路径命名的目录）改成新位置；audit.jsonl 带签名，原样保留。两份复制后会各自往下走，
+#   所以用 $CLAUDE_HOME/claude-mode-cowork-sync 记下每个会话上次同步时的 lastActivityAt：只有一边比它新就用那边覆盖另一边
+#   （旧的挪进备份），两边都新了算冲突、不动；记录里有但某一边没了，当作在那边删掉了，不再补回去。
+cowork_dir() {  # cowork_dir <数据目录> [账号 uuid] [组织 uuid]：该 profile 的 Cowork 会话目录；找不到输出空
+  local root="$1/local-agent-mode-sessions" acct="${2:-}" org="${3:-}" d best="" bestn=-1 n
+  [ -d "$root" ] || return 0
+  if [ -n "$acct" ] && [ -n "$org" ] && [ -d "$root/$acct/$org" ]; then printf '%s' "$root/$acct/$org"; return 0; fi
+  for d in "$root"/*/*/; do   # 否则取会话最多的那个（网关模式是 <账号前 8 位>/<组织前 8 位>，比如 c0062ea9/00000000）
+    d="${d%/}"; [ -d "$d" ] || continue
+    case "$d" in "$root"/skills-plugin/*) continue ;; esac
+    n=$(ls "$d"/local_*.json 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$n" -gt "$bestn" ]; then best="$d"; bestn=$n; fi
+  done
+  if [ -n "$best" ]; then printf '%s' "$best"; fi
+  return 0
+}
+cowork_js() {  # cowork_js plan <A> <B> <记录文件> | rewrite <源目录> <目标目录> <临时目录> <源 json> <目标 json>
+  osascript -l JavaScript - "$@" <<'EOF'
+ObjC.import('Foundation');
+const fm = $.NSFileManager.defaultManager;
+function read(f) { const s = $.NSString.stringWithContentsOfFileEncodingError(f, $.NSUTF8StringEncoding, null); return s.isNil() ? null : ObjC.unwrap(s); }
+function write(f, text, like) {   // 保留 like 的修改时间和权限（应用可能按修改时间排序）
+  const a = fm.attributesOfItemAtPathError(like, null);
+  if (!$.NSString.alloc.initWithUTF8String(text).writeToFileAtomicallyEncodingError(f, true, $.NSUTF8StringEncoding, null)) throw new Error('写入失败：' + f);
+  if (a.isNil()) return;
+  const d = $.NSMutableDictionary.dictionary;   // 键名就是常量的值；JXA 里拿不到 NSFileModificationDate 这类常量
+  for (const k of ['NSFileModificationDate', 'NSFilePosixPermissions']) { const v = a.objectForKey(k); if (!v.isNil()) d.setObjectForKey(v, k); }
+  fm.setAttributesOfItemAtPathError(d, f, null);
+}
+function list(dir) { const a = fm.contentsOfDirectoryAtPathError(dir, null); return a.isNil() ? [] : ObjC.deepUnwrap(a); }
+function sessions(dir) {   // 名字 → lastActivityAt
+  const out = {};
+  for (const f of list(dir)) {
+    const m = /^(local_[0-9A-Za-z-]+)\.json$/.exec(f); if (!m) continue;
+    let last = 0; try { last = Number(JSON.parse(read(dir + '/' + f)).lastActivityAt) || 0; } catch (e) {}
+    out[m[1]] = last;
+  }
+  return out;
+}
+const san = p => p.replace(/[^A-Za-z0-9]/g, '-');   // Claude Code 给 .claude/projects 下的目录起名的规则
+function run(argv) {
+  const [op] = argv;
+  if (op === 'plan') {   // 每行：动作 名字 新记录 旧记录（- 表示没有）
+    const [, A, B, ledger] = argv, a = sessions(A), b = sessions(B), led = {}, out = [];
+    for (const line of (read(ledger) || '').split('\n')) { const [n, v] = line.trim().split(/\s+/); if (n) led[n] = Number(v) || 0; }
+    for (const n of new Set([...Object.keys(a), ...Object.keys(b), ...Object.keys(led)])) {
+      const inA = n in a, inB = n in b, has = n in led, L = led[n], old = has ? String(L) : '-';
+      if (!inA && !inB) continue;                                      // 两边都没了，记录也不要了
+      if (inA !== inB) {
+        if (has) out.push('gone ' + n + ' ' + L + ' ' + old);          // 同步过、某一边删掉了：不补回去
+        else out.push((inA ? 'a2b ' : 'b2a ') + n + ' ' + (inA ? a[n] : b[n]) + ' -');
+        continue;
+      }
+      if (a[n] === b[n]) { out.push('keep ' + n + ' ' + a[n] + ' ' + old); continue; }
+      const newA = !has || a[n] > L, newB = !has || b[n] > L;
+      if (has && newA && newB) out.push('conflict ' + n + ' ' + L + ' ' + old);
+      else if (has ? newA : a[n] > b[n]) out.push('a2b ' + n + ' ' + a[n] + ' ' + old);
+      else out.push('b2a ' + n + ' ' + b[n] + ' ' + old);
+    }
+    return out.join('\n');
+  }
+  if (op === 'rewrite') {
+    const [, srcDir, dst, tmp, srcJson, dstJson] = argv;
+    let src = srcDir;   // 记录里的旧路径以会话自己的 cwd（<目录>/<local_id>/outputs）为准，它不一定是现在所在的目录
+    try { const cwd = JSON.parse(read(srcJson)).cwd || '', mark = '/' + srcJson.split('/').pop().replace(/\.json$/, '') + '/';
+          if (cwd.indexOf(mark) > 0) src = cwd.slice(0, cwd.indexOf(mark)); } catch (e) {}
+    const pairs = [[src, dst], [san(src), san(dst)]];
+    const fix = t => pairs.reduce((t, [x, y]) => t.split(x).join(y), t);
+    const cl = tmp + '/.claude';
+    if (fm.fileExistsAtPath(cl)) {
+      const projects = cl + '/projects';
+      for (const d of list(projects)) if (fix(d) !== d) fm.moveItemAtPathToPathError(projects + '/' + d, projects + '/' + fix(d), null);
+      const e = fm.enumeratorAtPath(cl); let r;
+      while (!(r = e.nextObject).isNil()) {
+        const rel = ObjC.unwrap(r), f = cl + '/' + rel, base = rel.split('/').pop();
+        if (!/\.jsonl?$|\.json\.backup/.test(base)) continue;
+        const t = read(f); if (t === null || fix(t) === t) continue;
+        write(f, fix(t), f);
+      }
+    }
+    const meta = fix(read(srcJson) || ''); JSON.parse(meta);   // 会话信息必须还是合法 JSON，否则整个会话不复制
+    write(dstJson, meta, srcJson);
+    return 'ok';
+  }
+  throw new Error('未知操作 ' + op);
+}
+EOF
+}
+cowork_copy() {  # cowork_copy <源目录> <目标目录> <local_id>：复制到目标的临时名下改好路径再换进去，目标原有的一份挪进备份
+  local src="$1" dst="$2" name="$3" tmp="$2/.aa-switch-$3"
+  rm -rf "$tmp" "$tmp.json"
+  if [ -d "$src/$name" ]; then   # APFS 上用克隆（cp -c），大会话也不额外占空间；不支持时退回普通复制
+    cp -cRp "$src/$name" "$tmp" 2>/dev/null || { rm -rf "$tmp"; cp -Rp "$src/$name" "$tmp" || { rm -rf "$tmp"; return 1; }; }
+  fi
+  if ! cowork_js rewrite "$src" "$dst" "$tmp" "$src/$name.json" "$tmp.json" >/dev/null 2>&1; then rm -rf "$tmp" "$tmp.json"; return 1; fi
+  if [ -e "$dst/$name.json" ] || [ -e "$dst/$name" ]; then
+    mkdir -p "$BK/cowork/$(basename "$dst")"
+    if [ -e "$dst/$name" ]; then mv "$dst/$name" "$BK/cowork/$(basename "$dst")/"; fi
+    if [ -e "$dst/$name.json" ]; then mv "$dst/$name.json" "$BK/cowork/$(basename "$dst")/"; fi
+  fi
+  if [ -d "$tmp" ]; then mv "$tmp" "$dst/$name"; fi
+  mv "$tmp.json" "$dst/$name.json"
+}
+desktop_sync_cowork() {  # 两个 profile 的 Cowork 会话互相同步（规则见上）；应该在桌面应用退出后调用
+  local ids acct org a b plan act name new old n=0 c=0 f=0 ledger="$CLAUDE_HOME/claude-mode-cowork-sync" led=""
+  a="$DESKTOP_DATA/local-agent-mode-sessions"; b="${DESKTOP_DATA}-3p/local-agent-mode-sessions"
+  if [ ! -d "$a" ] && [ ! -d "$b" ]; then return 0; fi   # 没用过 Cowork
+  ids="$(oauth_ids)"; acct="${ids%% *}"; org="${ids#* }"; [ "$org" = "$ids" ] && org=""
+  a="$(cowork_dir "$DESKTOP_DATA" "$acct" "$org")"
+  b="$(cowork_dir "${DESKTOP_DATA}-3p")"
+  if [ -z "$a" ] || [ -z "$b" ]; then
+    say "Cowork 会话暂时没法同步（$( [ -z "$b" ] && echo "网关模式还没初始化过 Cowork，在网关模式下打开一次 Cowork 标签后再切一次即可" || echo "账号模式的 Cowork 目录没找到" )）。"
+    return 0
+  fi
+  plan="$(cowork_js plan "$a" "$b" "$ledger" 2>/dev/null)" || { say "读取 Cowork 会话列表失败，这次没有同步。"; return 0; }
+  while read -r act name new old; do
+    [ -n "$act" ] || continue
+    case "$act" in
+      a2b|b2a)
+        if { [ "$act" = a2b ] && cowork_copy "$a" "$b" "$name"; } || { [ "$act" = b2a ] && cowork_copy "$b" "$a" "$name"; }; then
+          n=$((n+1)); led="$led$name $new
+"
+        else
+          f=$((f+1)); if [ "$old" != - ]; then led="$led$name $old
+"; fi
+        fi ;;
+      conflict) c=$((c+1)); led="$led$name $old
+" ;;
+      *) led="$led$name $new
+" ;;
+    esac
+  done <<EOF
+$plan
+EOF
+  printf '%s' "$led" > "$ledger.tmp" && mv "$ledger.tmp" "$ledger"
+  say "Cowork 会话已同步（更新 ${n} 条）。"
+  if [ "$c" -gt 0 ]; then say "有 ${c} 条 Cowork 会话在两种模式下都继续聊过，没法合并，两边各自保留。"; fi
+  if [ "$f" -gt 0 ]; then say "有 ${f} 条 Cowork 会话复制失败，下次切换时再试。"; fi
+  return 0
+}
 backup_desktop() {
   mkdir -p "$BK/desktop"
   [ -f "$DESKTOP_CONF" ] && cp -p "$DESKTOP_CONF" "$BK/desktop/"
@@ -341,17 +492,21 @@ mode_desktop_gateway() {
   desktop_json write-gateway "$url" "$key" "$models" >/dev/null || die "写入桌面应用的网关配置失败。"
   chmod 600 "$DESKTOP_LIB"/*.json 2>/dev/null || true   # 里面有 key
   desktop_json set-mode 3p >/dev/null || die "写入 ${DESKTOP_CONF} 失败。"
+  desktop_quit   # 先退出再同步：应用开着时会话文件可能正写到一半
   desktop_sync_sessions
+  desktop_sync_cowork
   say "已把 ${DESKTOP_APP} 切到网关模式（${url}，模型：${models}）。"
-  desktop_restart
+  desktop_reopen
 }
 mode_desktop_account() {
   desktop_installed || die "这台电脑上没有找到 ${DESKTOP_APP}.app。"
   backup_desktop
   desktop_json set-mode 1p >/dev/null || die "写入 ${DESKTOP_CONF} 失败。"
+  desktop_quit   # 先退出再同步：应用开着时会话文件可能正写到一半
   desktop_sync_sessions
+  desktop_sync_cowork
   say "已把 ${DESKTOP_APP} 切回账号模式。"
-  desktop_restart
+  desktop_reopen
 }
 
 # ---------- 各命令 ----------
@@ -453,7 +608,8 @@ case "$1" in
   forget-key) forget_key ;;
   mode) mode_word ;;
   desktop-mode) desktop_mode ;;
-  desktop) case "${2:-}" in gateway) mode_desktop_gateway ;; account) mode_desktop_account ;; sync) desktop_installed || die "没有找到 ${DESKTOP_APP}.app。"; backup_desktop; desktop_sync_sessions ;; *) die "用法：claude-mode desktop gateway|account|sync" ;; esac ;;
+  desktop) case "${2:-}" in gateway) mode_desktop_gateway ;; account) mode_desktop_account ;; sync) desktop_installed || die "没有找到 ${DESKTOP_APP}.app。"; backup_desktop; desktop_sync_sessions
+      if desktop_running; then say "Cowork 会话要在 ${DESKTOP_APP} 退出后才能同步（切换时会自动做），这次跳过。"; else desktop_sync_cowork; fi ;; *) die "用法：claude-mode desktop gateway|account|sync" ;; esac ;;
   version) echo "$CLAUDE_MODE_VERSION" ;;
   config) show_config ;;
   has-key|find-key) [ -n "${2:-}" ] && valid_url "$2" || die "用法：claude-mode has-key URL"; [ -n "$(kc_get "$(kc_service "$2")")" ] ;;
