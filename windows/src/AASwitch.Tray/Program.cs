@@ -80,6 +80,13 @@ static class Program
             var products = demoProducts ?? TrayApp.CreateProducts(_ => { });
             foreach (var p in products)
                 using (var form = new ConfigureForm(p)) { form.Show(); Save(form, "configure-" + (p.IsCodex ? "codex" : "claude")); }
+            using (var form = new ConfigureForm(products[^1]))   // 最长的出错提示：401 + 网关原因 + 换地址的提醒，看会不会被截断
+            {
+                form.Show();
+                form.ShowError(TrayView.ClassifyProbe(401, "https://new-gateway.example.com/v1/models", "https://new-gateway.example.com", "该令牌额度已用尽 TokenStatusExhausted[sk-…]").Message
+                    + "\n你改了地址，但 API key 还是原来 api.omniapexroute.com 的那个，请换成新地址对应的 key。");
+                Save(form, "configure-error");
+            }
             var targets = products.Where(p => p.ModeWord() != "absent").Select(p => (p, p.ModeWord(), TrayView.Parse(p.Status()))).ToList();
             using (var form = new OnboardingForm(targets)) { form.Show(); Save(form, "onboarding"); }
             return 0;

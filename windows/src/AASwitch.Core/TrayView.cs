@@ -114,14 +114,19 @@ public static class TrayView
     public sealed record ProbeResult(bool Ok, string? Message, bool Blocking);
 
     /// <summary>探测结果分类：2xx 通过；401/403 是 key 不对（拦下）；其他情况告诉用户但允许坚持保存。status 为 0 表示连不上。</summary>
-    public static ProbeResult ClassifyProbe(int status, string endpoint, string url) => status switch
+    /// <summary>reason 是网关自己给的原因（Gateway.GatewayMessage），有就附在后面。</summary>
+    public static ProbeResult ClassifyProbe(int status, string endpoint, string url, string? reason = null)
     {
-        0 => new(false, $"连不上 {endpoint}（超时或域名不对）。", false),
-        >= 200 and < 300 => new(true, null, false),
-        401 or 403 => new(false, $"这个 key 在 {url} 上无效（HTTP {status}）。每个网关的 key 不通用，请填该地址对应的 key。", true),
-        404 => new(false, $"地址能连上，但 {endpoint} 不存在（HTTP 404），地址的路径可能不对。", false),
-        _ => new(false, $"地址返回了 HTTP {status}，可能不是一个兼容的网关。", false),
-    };
+        var said = reason is null ? "" : $"网关返回：{reason}。";
+        return status switch
+        {
+            0 => new(false, $"连不上 {endpoint}（超时或域名不对）。", false),
+            >= 200 and < 300 => new(true, null, false),
+            401 or 403 => new(false, $"这个 key 在 {url} 上被拒绝（HTTP {status}）。{said}每个网关的 key 不通用，请填该地址对应的 key；如果确认没填错，可能是 key 已过期、被禁用或额度用完，请到网关后台看一下。", true),
+            404 => new(false, $"地址能连上，但 {endpoint} 不存在（HTTP 404），地址的路径可能不对。{said}", false),
+            _ => new(false, $"地址返回了 HTTP {status}，可能不是一个兼容的网关。{said}", false),
+        };
+    }
 
     // ---------- 初始设置 ----------
     public static string DetectedText(IProduct p, string mode, List<Line> info)

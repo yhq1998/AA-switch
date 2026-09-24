@@ -96,4 +96,13 @@ public sealed class TrayViewTests
         Assert.Equal((ok, blocking), (r.Ok, r.Blocking));
         Assert.Equal(ok, r.Message is null);
     }
+
+    [Fact]
+    public void ClassifyProbe_appends_the_gateway_reason()
+    {
+        var r = TrayView.ClassifyProbe(401, "https://x/v1/models", "https://x", "额度已用完");
+        Assert.True(r.Blocking);
+        Assert.Contains("网关返回：额度已用完。", r.Message);
+        Assert.DoesNotContain("网关返回", TrayView.ClassifyProbe(401, "https://x/v1/models", "https://x").Message);
+    }
 }
