@@ -53,8 +53,8 @@ Requires macOS 13 or later on either Intel or Apple silicon (the app is a univer
 ### Windows
 
 1. Download **AA Switch.exe** from [aaswitch.omniapexroute.com](https://aaswitch.omniapexroute.com) (or from the [Releases](https://github.com/yhq1998/AA-switch/releases) page).
-2. Put it somewhere permanent (Documents, `D:\Tools`, …) and double-click it. There is no installer and no runtime to install.
-3. Look for the smiley icon in the system tray at the bottom right (it may be tucked under **^**; drag it out if you like).
+2. Double-click it and choose **Yes** to install it on this PC (per user, no admin rights, no runtime needed). It relaunches from its installed location and deletes the copy in Downloads. From then on, search for AA Switch in the Start menu; uninstall it from **Settings → Apps**.
+3. Look for the smiley icon in the system tray at the bottom right (it may be tucked under **^**; drag it onto the taskbar to keep it visible). If you can't find the icon, open AA Switch again from the Start menu: a window with the same controls as the tray menu pops up.
 
 Requires Windows 10 or 11 (64-bit). The Windows build is not code-signed yet, so SmartScreen may block the first run: click **More info → Run anyway**.
 You need at least one of: Codex (CLI or IDE extension), or Claude Code (terminal or IDE extension).

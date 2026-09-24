@@ -28,7 +28,10 @@ key 的条目名 `codex-mode:域名`（存在 Windows 凭据管理器的“普�
 - [x] 应用内更新：每 6 小时和手动“检查更新”读官网 latest.json 的 `windows` 段，有新版就下载、校验 sha256、把自己改名成 `.old` 再放入新版并重新打开。
       没有代码签名，所以只信 https、且下载地址必须和 latest.json 同一个主机
 - [x] 发布：`build.sh` 出发布包，`site/deploy.sh` 顺带上传并写 latest.json 的 `windows` 段，官网按访客系统给下载按钮（见 DEVELOPMENT.md）
-- [ ] 代码签名（没签名的 exe 首次运行会被 SmartScreen 拦一下）、安装包 / 开始菜单快捷方式
+- [x] 安装：从安装目录以外双击时提议装到 `%LOCALAPPDATA%\Programs\AA Switch\`（开始菜单快捷方式、“设置 → 应用”里的卸载入口、开机自启改指向新位置，删掉“下载”里的那份）；
+      `--install` / `--uninstall [--quiet]` 不问直接装 / 卸。用户自己打开时（包括已经在运行时再打开）弹出一个窗口，内容由托盘菜单原样转换，
+      顶上说明图标可能收在“^”里；开机自启带 `--autostart`，安静地待在托盘
+- [ ] 代码签名（没签名的 exe 首次运行会被 SmartScreen 拦一下）
 
 ## 开发（macOS 上即可）
 

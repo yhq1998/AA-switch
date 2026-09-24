@@ -124,7 +124,7 @@ UPDATE_URL=https://aaswitch.example.com/download/latest.json \
 
 **冒烟测试。** `build.sh` 第一步会跑仓库根目录的 `smoke-test.sh`（约 7 秒），不通过就不出包；改了脚本也可以随时单独跑 `./smoke-test.sh`。它在一个空的临时家目录里模拟刚装上的新用户，用系统自带的 bash 3.2 把两个脚本的主要路径各跑一遍并检查写出的文件：状态、配置、切到 API、切回账号、key 被拒（401/403）和登录失败时的回滚、备份清理、用户原有配置是否保留、桌面应用的网关模式和会话同步。钥匙串、curl、pgrep、open、codex 命令行都换成假替身，osascript 只放行读写 JSON 的 JavaScript，所以不碰真实配置、不会退出正在用的应用。发出去的每个版本都会通过 `latest.json` 立刻推给所有用户，而自己机器上“备份早就超过 20 份”这类状态会掩盖新用户才遇到的问题（2.2.3–2.2.5 切换必失败就是这么漏出去的），所以新增脚本功能时顺手在这里加一条断言。它测不到菜单和弹窗、真实网关，以及真的 Codex / Claude 对配置的反应。
 
-**版本号与更新提示。** dmg 的文件名固定是 `AA Switch.dmg`（官网 URL 写作 `AA%20Switch.dmg`，浏览器保存时还原成带空格的名字；deploy.sh 另存一份 `AA-Switch.dmg` 兼容旧链接；服务器 Caddy 对这两个路径都下发 `Content-Disposition: attachment; filename="AA Switch.dmg"`，所以从任何入口、任何浏览器下载保存的都是这个名字；GitHub Release 的资产名不允许空格，会显示成 `AA.Switch.dmg`，内容相同），版本号不放文件名里，而是：`site/deploy.sh` 上传时顺带生成 `download/latest.json`（版本、日期、地址、sha256）；官网在下载按钮下显示"当前版本 vX.Y.Z"；App 构建时通过 `UPDATE_URL` 记住这个地址，启动时和之后每 6 小时读一次，发现比自己新就在菜单底部显示"有新版本 X.Y.Z，点击更新…"。点了就是应用内更新：下载 `download/AASwitch.app.tar.gz`（deploy.sh 一并上传），依次校验 sha256（latest.json 里的 `tgz_sha256`）、`codesign --verify --deep --strict`、签名 Team ID 与当前安装一致、版本号更新，全过了才写一个小脚本等本进程退出后替换 `/Applications/AA Switch.app` 并重新打开；任一步失败不动现有安装，弹窗给下载页。ad-hoc 签名的开发版不做 Team ID 比对。老于 2.2.0 的版本没有检查更新的逻辑，只能人工通知一次。App 的版本号默认取 `codex-mode.sh` 的 `CODEX_MODE_VERSION`，可用 `VERSION=` 覆盖；GitHub Release 的 tag 用同一个版本号。把 dmg 放到任何能下载的地方发给同事即可。三个 `DEFAULT_*` 都可不填，不填时首次切换会从已有 `config.toml` 推断地址，推断不到就交互询问。
+**版本号与更新提示。** dmg 的文件名固定是 `AA Switch.dmg`（官网 URL 写作 `AA%20Switch.dmg`，浏览器保存时还原成带空格的名字；deploy.sh 另存一份 `AA-Switch.dmg` 兼容旧链接；服务器 Caddy 对这两个路径都下发 `Content-Disposition: attachment; filename="AA Switch.dmg"`，所以从任何入口、任何浏览器下载保存的都是这个名字；GitHub Release 的资产名不允许空格，会显示成 `AA.Switch.dmg`，内容相同），版本号不放文件名里，而是：`site/deploy.sh` 上传时顺带生成 `download/latest.json`（版本、日期、地址、sha256）；官网在下载按钮下显示"当前版本 vX.Y.Z"；App 构建时通过 `UPDATE_URL` 记住这个地址，启动时和之后每 6 小时读一次，发现比自己新就在菜单底部显示"有新版本 X.Y.Z，点击更新…"。点了就是应用内更新：下载 `download/AASwitch.app.tar.gz`（deploy.sh 一并上传），依次校验 sha256（latest.json 里的 `tgz_sha256`）、`codesign --verify --deep --strict`、签名 Team ID 与当前安装一致、版本号更新，全过了才写一个小脚本等本进程退出后替换 `/Applications/AA Switch.app` 并重新打开；任一步失败不动现有安装，弹窗给下载页。ad-hoc 签名的开发版不做 Team ID 比对。老于 2.2.0 的版本没有检查更新的逻辑，只能人工通知一次。App 的版本号取仓库根目录的 `VERSION` 文件（Mac 和 Windows 共用，发版前改这一个地方；也可用 `VERSION=` 覆盖）；GitHub Release 的 tag 用同一个版本号，两个平台的安装包放在同一个 Release 里。把 dmg 放到任何能下载的地方发给同事即可。三个 `DEFAULT_*` 都可不填，不填时首次切换会从已有 `config.toml` 推断地址，推断不到就交互询问。
 
 不设 `SIGN_IDENTITY` 时是 ad-hoc 签名，只能通过方式二的 curl 命令分发（curl 下载的文件不带隔离标记，Gatekeeper 不拦；浏览器或聊天软件下载的会被拦）。
 
@@ -136,7 +136,7 @@ UPDATE_URL=https://aaswitch.example.com/download/latest.json \
 
 ### Windows 版
 
-代码在 `windows/`（C# / .NET 10，说明和进度见 [windows/README.md](windows/README.md)），和 macOS 版互不影响、版本号各走各的。在 macOS 上就能交叉编译（`brew install dotnet`）：
+代码在 `windows/`（C# / .NET 10，说明和进度见 [windows/README.md](windows/README.md)），和 macOS 版互不影响；版本号和 Mac 版共用根目录的 `VERSION`（从 2.3.3 起统一，之前 Windows 是 0.x）。在 macOS 上就能交叉编译（`brew install dotnet`）：
 
 ```bash
 cd windows

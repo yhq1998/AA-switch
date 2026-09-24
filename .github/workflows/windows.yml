@@ -63,20 +63,54 @@ jobs:
           # README 用的截图：固定的演示数据，不带这台机器上的测试地址
           $p = Start-Process -FilePath "out-tray/AA Switch.exe" -ArgumentList '--render', "$PWD\shots\demo", '--demo' -Wait -PassThru
           if ($p.ExitCode -ne 0) { exit 1 }
-      - name: Launch tray app for real
+      # 用户视角走一遍：下载的 exe 双击 → 提议安装 → 装好 → 从安装位置打开（弹窗口）→ 再打开一次（让正在运行的那个弹窗口）→ 卸载
+      - name: Install, launch, reopen, uninstall
         run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          function Shot($name) {
+            try {
+              $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+              $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+              [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+              $bmp.Save("$PWD\shots\$name.png")
+            } catch { Write-Host "screen capture failed: $_" }
+          }
+          function Fail($msg) { Write-Error $msg; Get-Content $log; exit 1 }
+          $data = "$env:LOCALAPPDATA\AA Switch"
+          $log = "$data\aa-switch.log"
+          New-Item -ItemType Directory -Force $data | Out-Null
+          Add-Content "$data\settings.conf" "onboarding_done=1"   # 初始设置对话框前面的 --click 步骤已经触发过条件，这里跳过它，好看到窗口
+          $exe = "$env:LOCALAPPDATA\Programs\AA Switch\AA Switch.exe"
+          $lnk = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\AA Switch.lnk"
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AASwitch"
+
           $p = Start-Process -FilePath "out-tray/AA Switch.exe" -PassThru
-          Start-Sleep -Seconds 10
-          if ($p.HasExited) { Write-Error "tray app exited with $($p.ExitCode)"; exit 1 }
-          Get-Content "$env:LOCALAPPDATA\AA Switch\aa-switch.log"
-          try {
-            Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
-            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
-            [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
-            $bmp.Save("$PWD\shots\screen.png")
-          } catch { Write-Host "screen capture failed: $_" }
+          Start-Sleep -Seconds 8
+          Shot "install-offer"
+          if ($p.HasExited) { Fail "offer: exited with $($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
+
+          $p = Start-Process -FilePath "out-tray/AA Switch.exe" -ArgumentList '--install' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Fail "install exited with $($p.ExitCode)" }
+          foreach ($path in $exe, $lnk, $key) { if (-not (Test-Path $path)) { Fail "missing after install: $path" } }
+          Get-ItemProperty $key | Select-Object DisplayName, DisplayVersion, UninstallString | Format-List
+
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 10
+          if ($p.HasExited) { Fail "tray app exited with $($p.ExitCode)" }
+          if (-not (Select-String -Path $log -Pattern "显示窗口" -Quiet)) { Fail "window not shown" }
+          Shot "window"
+
+          $q = Start-Process -FilePath $exe -PassThru -Wait
+          Start-Sleep -Seconds 2
+          if (-not (Select-String -Path $log -Pattern "另一份程序被打开" -Quiet)) { Fail "second launch did not reveal the running one" }
+          if ($p.HasExited) { Fail "first instance exited" }
+          Shot "reopen"
+
+          Start-Process -FilePath $exe -ArgumentList '--uninstall', '--quiet' -Wait
+          Start-Sleep -Seconds 6
+          foreach ($path in $lnk, $key, $exe) { if (Test-Path $path) { Fail "still there after uninstall: $path" } }
+          Get-Content $log
       - name: Probe
         if: always()
         shell: powershell

@@ -7,7 +7,12 @@ using AASwitch.Tray;
 //   --update-now      不显示界面，查一次更新，有新版就下载、校验并替换自己然后退出（不重新打开）。给 CI 用。
 //   --after-update    应用内更新后由旧版本启动新版本时带的参数：等旧版本退出后再常驻。
 //   --render <目录> --demo   同上，但用一套固定的演示数据（README 里的截图就是这么出的），不读真实配置。
-//   --render <目录>   把菜单、配置表单和初始设置画成 PNG 存到目录里然后退出。给 CI 用：没有人盯着 Windows 屏幕时也能看到界面长什么样。
+//   --render <目录>   把菜单、窗口、配置表单和初始设置画成 PNG 存到目录里然后退出。给 CI 用：没有人盯着 Windows 屏幕时也能看到界面长什么样。
+//   --autostart       开机自启（Run 注册表项）带的参数：安静地待在托盘，不弹窗口、不提议安装。
+//   --install         不问，直接装到 %LOCALAPPDATA%\Programs\AA Switch（开始菜单快捷方式、“设置 → 应用”里的条目）然后退出。
+//   --uninstall [--quiet]   “设置 → 应用”里点卸载时执行的。
+//   --installed-from <路径>  装好后新位置第一次启动时带的：删掉“下载”里的那份。
+// 不带这些参数（用户自己双击打开）：从安装目录以外打开时先提议安装；已经有一个在跑就让它弹出窗口；否则常驻托盘并弹出窗口。
 static class Program
 {
     [STAThread]
@@ -18,11 +23,21 @@ static class Program
         if (args.Length == 3 && args[0] == "--click") return Click(args[1], args[2] == "api");
         if (args.Length == 1 && args[0] == "--update-now") return Headless(app => app.UpdateForTestAsync(), "--update-now");
 
+        if (args.Length == 1 && args[0] == "--install") { var failure = Installer.Install(); Console.WriteLine(failure ?? "installed " + Installer.InstalledExe); return failure is null ? 0 : 1; }
+        if (args.Length >= 1 && args[0] == "--uninstall") return Installer.Uninstall(quiet: args.Contains("--quiet"));
+        var afterUpdate = args.Contains("--after-update");
+        var quiet = afterUpdate || args.Contains("--autostart");
+        // 要放在单实例检查前面：拿新下载的版本覆盖安装时，得先把正在运行的旧版关掉
+        if (!quiet && Installer.OfferInstall()) return 0;
+
         using var single = new Mutex(false, @"Local\AASwitch.Tray");
-        // 已经有一个在跑就退出；更新后重新打开时旧版本可能还没退干净，多等一会儿
-        try { if (!single.WaitOne(args.Contains("--after-update") ? 15_000 : 0)) return 0; } catch (AbandonedMutexException) { }
+        // 已经有一个在跑：让它把窗口弹出来（多半是图标被收进了任务栏的“^”里，用户以为没开），自己退出。
+        // 更新后重新打开时旧版本可能还没退干净，多等一会儿
+        try { if (!single.WaitOne(afterUpdate ? 15_000 : 0)) { if (!quiet) Reveal.Signal(); return 0; } } catch (AbandonedMutexException) { }
+        var from = Array.IndexOf(args, "--installed-from");
+        if (from >= 0 && from + 1 < args.Length) Installer.RemoveDownloadedCopy(args[from + 1]);
         Application.ThreadException += (_, e) => { Log.Write("未处理的异常：" + e.Exception); MessageBox.Show(e.Exception.Message, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning); };
-        Application.Run(new TrayApp());
+        Application.Run(new TrayApp(showWindow: !quiet));
         return 0;
     }
 
@@ -60,6 +75,7 @@ static class Program
             var more = menu.Items.OfType<ToolStripMenuItem>().FirstOrDefault(i => i.Text == "更多");
             if (more is not null) { more.ShowDropDown(); Save(more.DropDown, "menu-more"); }
             menu.Close();
+            using (var window = app.WindowForRender()) Save(window, "window");
 
             var products = demoProducts ?? TrayApp.CreateProducts(_ => { });
             foreach (var p in products)

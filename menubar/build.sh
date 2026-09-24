@@ -10,7 +10,7 @@
 # 可用环境变量（都有默认值）：
 #   APP_NAME      应用名，默认 "AA Switch"
 #   BUNDLE_ID     默认 com.omniapexroute.aaswitch（发出去后不要再改）
-#   VERSION       默认取 codex-mode.sh 里的 CODEX_MODE_VERSION
+#   VERSION       默认取仓库根目录的 VERSION 文件（Mac 和 Windows 共用一个版本号）
 #   SIGN_IDENTITY 签名身份；不设或 "-" 为 ad-hoc
 #   NOTARY_PROFILE  xcrun notarytool store-credentials 保存的凭据名；设了才公证
 #   DEFAULT_BASE_URL / DEFAULT_HEADERS / DEFAULT_LEGACY_KEYCHAIN_SERVICE  打进包里的默认配置（同 setup.sh）
@@ -26,8 +26,8 @@ echo "· 冒烟测试"
 APP_NAME="${APP_NAME:-AA Switch}"
 EXEC_NAME="${EXEC_NAME:-AASwitch}"
 BUNDLE_ID="${BUNDLE_ID:-com.omniapexroute.aaswitch}"
-SCRIPT_VERSION="$(sed -n 's/^CODEX_MODE_VERSION="\([^"]*\)".*/\1/p' ../codex-mode.sh | head -n1)"
-VERSION="${VERSION:-${SCRIPT_VERSION:-1.0.0}}"
+VERSION="${VERSION:-$(tr -d '[:space:]' < ../VERSION)}"
+[ -n "$VERSION" ] || { echo "没有版本号：检查仓库根目录的 VERSION 文件" >&2; exit 1; }
 BUILD="$(date +%Y%m%d%H%M)"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 COPYRIGHT="${COPYRIGHT:-© $(date +%Y)}"

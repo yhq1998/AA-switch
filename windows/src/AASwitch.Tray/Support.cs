@@ -65,12 +65,32 @@ static class Settings
 {
     static readonly ConfFile Conf = new(Path.Combine(AppInfo.DataDir, "settings.conf"));
     public static bool OnboardingDone { get => Conf.Get("onboarding_done") == "1"; set => Conf.Set("onboarding_done", value ? "1" : "0"); }
+    /// <summary>用户说过“不安装”的那个 exe 路径：从这里再打开时不再问。</summary>
+    public static string InstallDeclined { get => Conf.Get("install_declined"); set => Conf.Set("install_declined", value); }
 }
 
-/// <summary>开机自启：当前用户的 Run 注册表项，不需要管理员权限，下次登录生效。</summary>
+/// <summary>开机自启：当前用户的 Run 注册表项，不需要管理员权限，下次登录生效。
+/// 带 --autostart 参数：开机时安静地待在托盘，不弹窗口，也不提议安装。</summary>
 static class Autostart
 {
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    static string Command(string exe) => $"\"{exe}\" --autostart";
+
+    /// <summary>开着自启时改成指向 exe（装到本机后用）。</summary>
+    public static void PointTo(string exe)
+    {
+        using var k = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+        if (k?.GetValue(AppInfo.Name) is string s && s != Command(exe)) { k.SetValue(AppInfo.Name, Command(exe)); Log.Write($"开机自启：{s} → {Command(exe)}"); }
+    }
+
+    /// <summary>启动时修正：记下的程序已经不在了（被挪走或删掉）就改成自己；指向自己但没带 --autostart（旧版写的）就补上。</summary>
+    public static void Repair()
+    {
+        using var k = Registry.CurrentUser.OpenSubKey(RunKey);
+        if (k?.GetValue(AppInfo.Name) is not string s) return;
+        var target = s.StartsWith('"') ? s[1..s.IndexOf('"', 1)] : s.Split(' ')[0];
+        if (!File.Exists(target) || string.Equals(target, AppInfo.ExePath, StringComparison.OrdinalIgnoreCase)) PointTo(AppInfo.ExePath);
+    }
 
     public static bool Enabled
     {
@@ -82,7 +102,7 @@ static class Autostart
         set
         {
             using var k = Registry.CurrentUser.CreateSubKey(RunKey);
-            if (value) k.SetValue(AppInfo.Name, $"\"{AppInfo.ExePath}\"");
+            if (value) k.SetValue(AppInfo.Name, Command(AppInfo.ExePath));
             else k.DeleteValue(AppInfo.Name, throwOnMissingValue: false);
         }
     }

@@ -51,8 +51,8 @@ AA Switch 住在 Mac 的菜单栏（或 Windows 的托盘）里，点开就能�
 ### Windows
 
 1. 到官网 [aaswitch.omniapexroute.com](https://aaswitch.omniapexroute.com) 下载 **AA Switch.exe**（也可从 [Releases](https://github.com/yhq1998/AA-switch/releases) 下载）。
-2. 把它放到一个固定的位置（比如“文档”或 `D:\Tools`），双击运行。免安装，也不用装任何运行时。
-3. 屏幕右下角的托盘里会出现一个笑脸图标（可能收在 **^** 里，可以把它拖出来）。
+2. 双击运行，选 **是** 装到这台电脑上（装在当前用户的目录里，不需要管理员权限，也不用装任何运行时）。装好后会从开始菜单里的位置重新打开，“下载”里的那个文件会自动删掉。以后在开始菜单里搜 AA Switch 就能打开，卸载在 **设置 → 应用** 里。
+3. 屏幕右下角的托盘里会出现一个笑脸图标（可能收在 **^** 里，可以把它拖到任务栏上常驻）。找不到图标时，从开始菜单再打开一次 AA Switch，会弹出一个窗口，功能和托盘菜单一样。
 
 需要 Windows 10 或 11（64 位）。Windows 版目前没有代码签名，第一次运行可能被 SmartScreen 拦下：点 **更多信息 → 仍要运行**。
 Codex（命令行或 IDE 插件）、Claude Code（终端或 IDE 插件）至少装一个。
