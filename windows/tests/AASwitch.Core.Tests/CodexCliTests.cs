@@ -109,7 +109,8 @@ public sealed class CodexCliTests : IDisposable
 
         var found = CodexCli.Locate();
         Assert.Null(found.Path);
-        Assert.Equal([$"PATH 里的 {a}", $"PATH 里的 {b}"], found.Tried.Where(t => t.StartsWith("PATH 里的 " + _dir)));
+        // 只看 a、b 这两条：注册表里的 PATH 常写成 %LOCALAPPDATA%\…，展开时用的是上面指到临时目录的那个，也会落在 _dir 下
+        Assert.Equal([$"PATH 里的 {a}", $"PATH 里的 {b}"], found.Tried.Where(t => t == $"PATH 里的 {a}" || t == $"PATH 里的 {b}"));
         // 桌面应用和常见安装位置也要列出来，没找到时用户才知道还能怎么办
         Assert.Contains(found.Tried, t => t.Contains(Path.Combine(_dir, "local", "OpenAI", "Codex", "bin")) && t.Contains("先打开它一次"));
         Assert.Contains(found.Tried, t => t.Contains(Path.Combine(_dir, "roaming", "npm")));
