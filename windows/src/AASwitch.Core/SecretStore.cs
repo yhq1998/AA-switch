@@ -101,4 +101,4 @@ public sealed class WindowsCredentialStore : ISecretStore
 }
 
 /// <summary>相当于脚本里的 die：带一句给用户看的中文说明。</summary>
-public sealed class SwitchException(string message) : Exception(message);
+public class SwitchException(string message) : Exception(message);

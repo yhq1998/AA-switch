@@ -89,6 +89,12 @@ static class Program
             }
             var targets = products.Where(p => p.ModeWord() != "absent").Select(p => (p, p.ModeWord(), TrayView.Parse(p.Status()))).ToList();
             using (var form = new OnboardingForm(targets)) { form.Show(); Save(form, "onboarding"); }
+            using (var form = new CodexMissingForm([
+                @"环境变量 CODEX_BIN：C:\Users\john\codex.cmd（这个文件不在了）",
+                @"Codex 桌面应用自带的 C:\Users\john\AppData\Local\OpenAI\Codex\bin（没有；装了桌面应用的话先打开它一次）",
+                @"PATH 里的 C:\Windows\system32", @"PATH 里的 C:\Windows", @"PATH 里的 C:\Users\john\AppData\Local\Microsoft\WindowsApps",
+                @"npm 全局安装的 C:\Users\john\AppData\Roaming\npm", @"winget 安装的 C:\Users\john\AppData\Local\Microsoft\WinGet\Links",
+            ])) { form.Show(); Save(form, "codex-missing"); }
             return 0;
         }
         catch (Exception e) { Console.Error.WriteLine(e); return 1; }

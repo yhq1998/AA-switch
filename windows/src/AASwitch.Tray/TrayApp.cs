@@ -55,7 +55,7 @@ sealed class TrayApp : ApplicationContext
     {
         var paths = AppPaths.FromEnvironment();
         var secrets = new WindowsCredentialStore();
-        var codexBin = CodexCli.Find();
+        var codexBin = CodexCli.Find(Settings.CodexBin);
         var codex = new CodexMode(paths, secrets, codexBin is null ? null : new CodexCli(codexBin, paths.CodexHome), say, CodexProcesses.Running);
         return [new CodexProduct(codex, paths, secrets, codexBin is not null), new ClaudeProduct(new ClaudeMode(paths, secrets, say), paths, secrets)];
     }
@@ -65,15 +65,34 @@ sealed class TrayApp : ApplicationContext
     // ---------- 状态 ----------
     void ReadModes()
     {
+        MaybePickUpCodex();
         foreach (var p in _products)
             try { _mode[p.Name] = p.ModeWord(); } catch (Exception e) { _mode[p.Name] = "unknown"; Log.Write($"读取 {p.Name} 模式失败：{e.Message}"); }
         UpdateTooltip();
     }
 
+    /// <summary>建产品对象时没找到 codex 的话，每次刷新再找一遍：用户可能是程序启动之后才装的（启动时读到的 PATH 是那一刻的快照），
+    /// 或者刚在弹窗里自己指了位置。找到就换上带 codex 的那套，Codex 那一栏不再是“这台电脑上没装”。</summary>
+    void MaybePickUpCodex()
+    {
+        if (_products.OfType<CodexProduct>().FirstOrDefault()?.CliFound != false) return;
+        var found = CodexCli.Find(Settings.CodexBin);
+        if (found is null) return;
+        Log.Write($"找到 codex：{found}");
+        RebuildProducts();
+    }
+
+    void RebuildProducts()
+    {
+        _products.Clear();
+        _products.AddRange(CreateProducts(Say));
+    }
+
     void RefreshStatusAsync(Action? thenOnUi = null) => Task.Run(() =>
     {
+        var products = _products.ToList();   // 后台线程只认这份快照：找到 codex 后界面线程会换掉 _products 里的对象
         var fresh = new Dictionary<string, List<string>>();
-        foreach (var p in _products)
+        foreach (var p in products)
             try { if (p.ModeWord() != "absent") fresh[p.Name] = p.Status(); }
             catch (Exception e) { fresh[p.Name] = ["注意：读取状态失败，" + e.Message]; Log.Write($"读取 {p.Name} 状态失败：{e}"); }
         _ui.BeginInvoke(() =>
@@ -324,9 +343,43 @@ sealed class TrayApp : ApplicationContext
             return;
         }
         Log.Write($"{p.Name} {what}失败：{error}");
+        if (error is CodexNotFoundException) { FixCodexThenRetry(p, toApi, then); return; }
         if (_headless) { _headlessError = error.Message; then?.Invoke(); return; }
         var text = error is SwitchException ? error.Message : $"{error.GetType().Name}：{error.Message}\n\n请点托盘菜单里的“导出诊断信息”，把桌面上生成的文件发给管理员。";
         MessageBox.Show(text, $"{p.Name} {what}失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    }
+
+    /// <summary>切 Codex 时没找到 codex 命令行：先按现在的环境重新找一遍——程序启动时读到的 PATH 是那一刻的快照，
+    /// 用户很可能是启动之后才装的 codex。还是没有就弹窗，让用户看到找过哪些位置，装完点“重新查找”或者自己指一个。
+    /// 一旦找到就换上新的产品对象（原来那个里面的 codex 是 null）重试这次切换。</summary>
+    void FixCodexThenRetry(IProduct p, bool toApi, Action? then)
+    {
+        while (true)
+        {
+            var found = CodexCli.Locate(Settings.CodexBin);
+            if (found.Path is not null)
+            {
+                Log.Write($"重新找到 codex：{found.Path}，重试这次切换");
+                RebuildProducts();
+                ReadModes(); Rebuild();
+                _ = DoSwitchAsync(_products.FirstOrDefault(x => x.Name == p.Name) ?? p, toApi, then);
+                return;
+            }
+            Log.Write("找不到 codex 命令行，找过：" + string.Join("；", found.Tried));
+            if (_headless) { _headlessError = "找不到 Codex 命令行"; then?.Invoke(); return; }
+            using var form = new CodexMissingForm(found.Tried);
+            var answer = form.ShowDialog();
+            if (answer == DialogResult.OK && form.Picked is not null)
+            {
+                Settings.CodexBin = form.Picked;
+                Log.Write($"用户指定 codex 位置：{form.Picked}");
+                continue;
+            }
+            if (answer == DialogResult.Retry) continue;   // “重新查找”：回去按现在的环境再找一遍
+            Log.Write("用户关掉了“找不到 Codex 命令行”");
+            then?.Invoke();
+            return;
+        }
     }
 
     /// <summary>配置表单；保存后如果当前就在 API 模式，立即重新切换让新地址 / 新 key 生效。</summary>
@@ -452,7 +505,12 @@ sealed class TrayApp : ApplicationContext
             catch (Exception e) { r.AppendLine("  读取失败：" + e); }
             r.AppendLine();
         }
-        r.AppendLine("== 相关程序").AppendLine($"codex：{CodexCli.Find() ?? "（PATH 里没有）"}").AppendLine($"正在运行的 Codex 进程：{string.Join("、", CodexProcesses.Running())}").AppendLine();
+        r.AppendLine("== 相关程序");
+        var codex = CodexCli.Locate(Settings.CodexBin);
+        r.AppendLine($"codex：{codex.Path ?? "（没找到）"}");
+        if (codex.Path is null) foreach (var t in codex.Tried) r.AppendLine("  找过 " + t);
+        if (Settings.CodexBin.Length > 0) r.AppendLine($"用户指定的 codex 位置：{Settings.CodexBin}");
+        r.AppendLine($"正在运行的 Codex 进程：{string.Join("、", CodexProcesses.Running())}").AppendLine();
         r.AppendLine($"== 最近的日志（{Log.FilePath}）").AppendLine(Log.Tail(300));
         var file = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), $"{AppInfo.Name} 诊断 {DateTime.Now:yyyyMMdd-HHmmss}.txt");
         try { File.WriteAllText(file, r.ToString(), new UTF8Encoding(true)); Process.Start("explorer.exe", $"/select,\"{file}\""); }

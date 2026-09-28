@@ -271,7 +271,7 @@ public sealed partial class CodexMode(AppPaths paths, ISecretStore secrets, ICod
 
     void NeedCodex()
     {
-        if (codex is null) throw new SwitchException("找不到 Codex 命令行（PATH 里的 codex），可用环境变量 CODEX_BIN 指定。");
+        if (codex is null) throw new CodexNotFoundException("找不到 Codex 命令行。装了 Codex 桌面应用的话先打开它一次；也可以 npm i -g @openai/codex 另装一个，或用环境变量 CODEX_BIN 指定。");
     }
 
     void EnsureNotRunning()

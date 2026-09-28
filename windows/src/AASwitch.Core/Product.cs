@@ -48,6 +48,8 @@ public sealed class ClaudeProduct(ClaudeMode mode, AppPaths paths, ISecretStore 
 public sealed class CodexProduct(CodexMode mode, AppPaths paths, ISecretStore secrets, bool cliFound) : IProduct
 {
     public string Name => "Codex";
+    /// <summary>建这个对象时找没找到 codex 命令行：没找到的话托盘每次刷新会再找一遍。</summary>
+    public bool CliFound => cliFound;
     public string AccountWord => "chatgpt";
     public string AccountTitle => "ChatGPT 账号";
     public string UrlPlaceholder => "https://api.example.com/v1";

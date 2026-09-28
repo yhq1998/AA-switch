@@ -25,6 +25,12 @@ key 的条目名 `codex-mode:域名`（存在 Windows 凭据管理器的“普�
 - [x] 托盘程序 `AA Switch.exe`（`src/AASwitch.Tray`，WinForms）：每个产品一行“账号 | API”分段控件、配置表单（规范化地址，用 key 探测网关：401/403 拦下，
       连不上或 404 可坚持保存）、初始设置、开机自启（HKCU 的 Run 项）、导出诊断信息、单实例。菜单该显示什么由 Core 的 `TrayView` 决定，有单元测试。
       还没有的：切换前已打开的终端会话提醒、深色菜单
+- [x] 找 codex 命令行（`CodexCli.Locate`）：先看用户在程序里指定的位置（`settings.conf` 的 `codex_bin`），再看 `CODEX_BIN`，再看 Codex 桌面应用
+      自带的那份（应用每次启动复制到 `%LOCALAPPDATA%\OpenAI\Codex\bin\<运行时 ID>\codex.exe`，不在 PATH 里，有几份取最新的），然后按 PATH 找
+      `codex.exe` / `codex.cmd` / `codex.bat`（跳过应用商店的安装目录 `…\WindowsApps\OpenAI.Codex_…`，那里的直接运行会拒绝访问），
+      最后看常见安装位置：`%APPDATA%\npm`、winget 的 `Links`、`%LOCALAPPDATA%\pnpm`、Scoop 的 `shims`。环境变量和 PATH 除了当前进程那份，还读当前用户和本机的（注册表里，实时）——进程里的是启动那一刻的快照，
+      用户装完 codex 或 `setx` 之后不重启程序就一直看不到。切换时没找到：先按现在的环境重新找一遍，还是没有就弹窗列出找过的位置，
+      装完点“重新查找”或者自己指一个位置，找到就接着完成这次切换；诊断文件里也会列出找过的位置
 - [x] 应用内更新：每 6 小时和手动“检查更新”读官网 latest.json 的 `windows` 段，有新版就下载、校验 sha256、把自己改名成 `.old` 再放入新版并重新打开。
       没有代码签名，所以只信 https、且下载地址必须和 latest.json 同一个主机
 - [x] 发布：`build.sh` 出发布包，`site/deploy.sh` 顺带上传并写 latest.json 的 `windows` 段，官网按访客系统给下载按钮（见 DEVELOPMENT.md）

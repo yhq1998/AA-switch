@@ -67,6 +67,8 @@ static class Settings
     public static bool OnboardingDone { get => Conf.Get("onboarding_done") == "1"; set => Conf.Set("onboarding_done", value ? "1" : "0"); }
     /// <summary>用户说过“不安装”的那个 exe 路径：从这里再打开时不再问。</summary>
     public static string InstallDeclined { get => Conf.Get("install_declined"); set => Conf.Set("install_declined", value); }
+    /// <summary>用户在“找不到 Codex 命令行”弹窗里自己指的 codex 位置；空表示没指过，按环境变量、桌面应用、PATH 和常见安装位置找。</summary>
+    public static string CodexBin { get => Conf.Get("codex_bin"); set => Conf.Set("codex_bin", value); }
 }
 
 /// <summary>开机自启：当前用户的 Run 注册表项，不需要管理员权限，下次登录生效。
