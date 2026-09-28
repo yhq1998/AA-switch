@@ -13,7 +13,7 @@ README 里的截图，用的都是演示数据（地址 `api.example.com`），�
 ```bash
 D=$(mktemp -d); export CODEX_HOME=$D/.codex CLAUDE_CONFIG_DIR=$D/.claude; mkdir -p "$CODEX_HOME" "$CLAUDE_CONFIG_DIR"
 # 1. 用脚本造一份“Codex 在 API 模式、Claude Code 在账号模式”的演示数据（假 key 会进钥匙串，最后一步删掉）
-export CODEX_BIN=/Applications/ChatGPT.app/Contents/Resources/codex CODEX_MODE_FORCE=1 CODEX_MODE_NO_REOPEN=1 CODEX_MODE_NONINTERACTIVE=1
+export CODEX_BIN=$(bash codex-mode.sh codex-path) CODEX_MODE_FORCE=1 CODEX_MODE_NO_REOPEN=1 CODEX_MODE_NONINTERACTIVE=1
 printf 'sk-demo-not-a-real-key\n' | CODEX_MODE_BASE_URL=https://api.example.com/v1 CODEX_MODE_KEY_STDIN=1 bash codex-mode.sh configure
 bash codex-mode.sh api
 # 2. 程序只允许一个实例，所以用一份换了 bundle id 的副本来拍，不用退出正在用的那个

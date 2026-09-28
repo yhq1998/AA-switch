@@ -11,6 +11,7 @@
 ~/.codex/codex-mode chatgpt      # 切回 ChatGPT 账号；有存档的登录态会自动恢复
 ~/.codex/codex-mode status       # 看当前模式，不显示 key
 ~/.codex/codex-mode configure    # 修改 API 地址、额外请求头或 key
+~/.codex/codex-mode codex-path   # 排查“找不到 Codex 命令行”：输出找到的那个，或列出找过的位置
 
 ~/.claude/claude-mode api        # Claude Code 切到 API：写 ~/.claude/settings.json 的 env 块，新会话立即生效
 ~/.claude/claude-mode account    # 切回 Claude 账号：删掉 env 块里的那几项，账号登录态一直都在
@@ -172,6 +173,7 @@ Windows 版目前没有代码签名，所以只信 https，且下载地址必须
 - 写入前把 `config.toml`、`auth.json`、要改的会话文件和数据库快照复制到 `~/.codex/codex-mode-backups/<时间>/`；写完让 Codex 读一遍新配置（`codex login status`，它会完整加载配置且不联网，比 `codex doctor` 快几秒），读不通或登录失败就整体恢复。
 - 切换前若处于 ChatGPT 登录态，把 `auth.json` 存一份到 `~/.codex/codex-mode-auth/chatgpt.json`；切回账号模式时直接恢复，不用重新登录。token 过期时 Codex 会自己提示登录。
 
+- **找 codex 命令行的位置会变，所以按顺序探好几个地方**（`codex-mode codex-path` 输出探到的那一个，探不到就列出找过的位置，诊断信息里也有这一行）。ChatGPT 26.924（2026-09-26 的自动更新）把自带的 CLI 从 `Contents/Resources/codex` 搬进了 `Contents/Resources/codex-cli/`：入口写在同目录 `codex-package.json` 的 `entrypoint`（现在是 `bin/codex`，一个 `exec` 掉 `CodexCLI.app/Contents/MacOS/codex` 的壳），旁边还有 `codex-resources/`、`codex-path/`。只探老路径的版本（2.2.4 及以前）从那天起对所有人都是「切换失败：找不到 Codex 命令行」——`api`、`chatgpt`、`fix-threads` 三条命令开头都要 `need_codex`，只有 `status` 还能跑，所以菜单上一切正常、一点就失败。顺序是：`CODEX_BIN` → 老路径 → `entrypoint`（只接受包内相对路径）→ 已知的新路径 → `CodexCLI.app` 里的真二进制 → `PATH` → `CODEX_MODE_EXTRA_BINS` 里那几个（`~/.local/bin`、Homebrew、`/usr/local/bin`；菜单栏应用继承的 `PATH` 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，自己装的 codex 全不在里面）。`codex login status` 的措辞新版没变，`auth_mode` 照样认得。
 ### Claude Code（claude-mode.sh）
 
 - Claude Code 的凭据优先级里，环境变量 `ANTHROPIC_AUTH_TOKEN` 排在账号登录之前，且 `~/.claude/settings.json` 的 `env` 块对终端和 IDE 里的每个新会话生效。所以切 API 只是往 `env` 块写 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`（有额外请求头再写 `ANTHROPIC_CUSTOM_HEADERS`），切回账号只是删掉它们。用 `ANTHROPIC_AUTH_TOKEN` 而不是 `ANTHROPIC_API_KEY`，后者首次使用会弹确认。
@@ -213,7 +215,8 @@ Windows 版目前没有代码签名，所以只信 https，且下载地址必须
 | --- | --- |
 | `CODEX_HOME` | Codex 数据目录，默认 `~/.codex` |
 | `CODEX_APP_NAME` | 应用名，默认自动找 `ChatGPT` / `Codex` |
-| `CODEX_BIN` | Codex 命令行路径，默认用应用内自带的 |
+| `CODEX_BIN` | Codex 命令行路径，默认按 `codex-path` 那套顺序找 |
+| `CODEX_MODE_EXTRA_BINS` | `PATH` 之外再找的几个 codex 路径，冒号分隔；置空表示不找（冒烟测试就这么隔离） |
 | `CODEX_MODE_NO_REOPEN=1` | 切换后不自动重开应用 |
 | `CODEX_MODE_NONINTERACTIVE=1` | 需要输入时直接报错，供图形界面调用 |
 | `CODEX_SETUP_URL` | setup.sh 安装时临时指定托管目录 |

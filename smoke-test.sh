@@ -205,6 +205,42 @@ echo "· claude-mode $(/bin/bash "$SCRIPTS/claude-mode.sh" version 2>/dev/null)"
 SETTINGS="$CLAUDE_CONFIG_DIR/settings.json"
 run claude mode; ok "全新环境 mode"; eq "没用过 Claude Code 是 absent" "$OUT" absent
 printf '{ "oauthAccount": { "emailAddress": "smoke@example.test", "accountUuid": "11111111-1111-1111-1111-111111111111", "organizationUuid": "22222222-2222-2222-2222-222222222222" } }\n' > "$HOME/.claude.json"
+# ---------- 找 codex 命令行 ----------
+# 自带的那份位置变过（ChatGPT 26.924 把 Contents/Resources/codex 搬进了 codex-cli/），只探老路径的版本发出去
+# 之后所有人的切换都失败，而这台机器上 CODEX_BIN 和 PATH 里都有 codex，谁也看不出来。所以这里不给 CODEX_BIN，
+# 也把 PATH 之外的几个位置（$HOME/.local/bin、Homebrew……）置空，只认摆进假应用包里的那一份。
+APP_RES="$HOME/Applications/Codex.app/Contents/Resources"
+codex_path() {  # 结果放进 OUT / ERR / CODE，不带 CODEX_BIN，PATH 也换成菜单栏应用那个残缺的（假替身不算）
+  OUT="$(env -u CODEX_BIN CODEX_MODE_EXTRA_BINS= PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    /bin/bash "$SCRIPTS/codex-mode.sh" codex-path 2>"$T/stderr")"; CODE=$?
+  ERR="$(cat "$T/stderr")"
+}
+put_codex() { mkdir -p "$(dirname "$1")"; cp "$T/bin/codex" "$1"; }   # 把假 codex 摆到包里的某个位置
+
+codex_path; fails "应用里和 PATH 里都没有 codex"
+has "报错列出了找过的位置" "$ERR" "Codex.app（不在这里）"
+ERR="$(env -u CODEX_BIN CODEX_MODE_EXTRA_BINS= PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+  /bin/bash "$SCRIPTS/codex-mode.sh" chatgpt 2>&1 >/dev/null)"   # need_codex 在第一步，后面什么都不会做
+has "切换时的报错也列出了找过的位置" "$ERR" "Codex.app（不在这里）"
+has "报错说了怎么办" "$ERR" "CODEX_BIN"
+put_codex "$APP_RES/codex"
+codex_path; ok "老布局 Resources/codex"; eq "用的是老布局那份" "$OUT" "$APP_RES/codex"
+rm -f "$APP_RES/codex"
+put_codex "$APP_RES/codex-cli/bin/codex"
+put_codex "$APP_RES/codex-cli/CodexCLI.app/Contents/MacOS/codex"
+echo '{ "layoutVersion": 1, "entrypoint": "bin/codex" }' > "$APP_RES/codex-cli/codex-package.json"
+codex_path; ok "新布局 codex-cli"; eq "用的是 codex-package.json 指的入口" "$OUT" "$APP_RES/codex-cli/bin/codex"
+echo '{ "entrypoint": "bin/moved-again" }' > "$APP_RES/codex-cli/codex-package.json"
+codex_path; eq "entrypoint 指的文件不在时退回已知新路径" "$OUT" "$APP_RES/codex-cli/bin/codex"
+echo '{ "entrypoint": "../../../../../../bin/sh" }' > "$APP_RES/codex-cli/codex-package.json"
+codex_path; eq "entrypoint 想往包外跑时不认" "$OUT" "$APP_RES/codex-cli/bin/codex"
+rm -rf "$APP_RES/codex-cli/bin" "$APP_RES/codex-cli/codex-package.json"
+codex_path; eq "只剩 CodexCLI.app 里的真二进制" "$OUT" "$APP_RES/codex-cli/CodexCLI.app/Contents/MacOS/codex"
+rm -rf "$HOME/Applications"
+OUT="$(env CODEX_BIN="$T/nope/codex" CODEX_MODE_EXTRA_BINS="$T/bin/codex" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+  /bin/bash "$SCRIPTS/codex-mode.sh" codex-path 2>/dev/null)"
+eq "CODEX_BIN 指的文件不在时接着往下找" "$OUT" "$T/bin/codex"
+
 run claude mode; ok "mode"; eq "用过但没切过是 account" "$OUT" account
 run claude config; ok "config"; has "沿用 codex-mode 的网关并去掉 /v1" "$OUT" "base_url=$GW"; hasnt "去掉了 /v1" "$OUT" "/v1"
 run claude status; ok "全新环境 status"; has "status 显示账号" "$OUT" "模式：Claude 账号"

@@ -981,7 +981,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             r.append("")
         }
         r.append("== 相关程序")
-        r.append("codex：" + sh("/usr/bin/which", ["codex"]))
+        // which 只看得到 App 继承的那个残缺 PATH，所以 Codex 这行问脚本自己找到了哪个（找不到时它会列出找过的位置）
+        r.append("codex（codex-mode 找到的）：" + sh("/bin/bash", [codex.script, "codex-path"]).replacingOccurrences(of: "\n", with: "\n  "))
+        r.append("codex（PATH 里的）：" + sh("/usr/bin/which", ["codex"]))
         r.append("claude：" + sh("/usr/bin/which", ["claude"]))
         for app in ["ChatGPT", "Codex", "Claude"] {
             for dir in ["/Applications", NSHomeDirectory() + "/Applications"] where fm.fileExists(atPath: "\(dir)/\(app).app") {

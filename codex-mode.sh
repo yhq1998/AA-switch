@@ -11,6 +11,7 @@
 #   codex-mode mode         只输出一个词 api / chatgpt / none，供菜单栏小工具等程序读取
 #   codex-mode version      输出脚本版本号
 #   codex-mode config       输出已保存的地址和请求头（不含 key），供程序读取
+#   codex-mode codex-path   输出找到的 Codex 命令行路径；找不到时列出找过的位置（退出码 1），供排查使用
 #   codex-mode find-key URL  不问用户地找该地址的 key（钥匙串 → 当前在用的 → 旧版条目），找到就存进钥匙串，退出码 0 表示有
 #   codex-mode has-key URL  钥匙串里有没有该地址的 key（退出码 0 表示有）
 #   codex-mode key URL      输出钥匙串里该地址的 key（供配置表单回填）
@@ -26,12 +27,13 @@
 # 登录态：切换前若是 ChatGPT 登录，把 auth.json 存到 ~/.codex/codex-mode-auth/chatgpt.json；切回账号模式时直接恢复，
 #   不用重新登录（token 过期时 Codex 会自己提示登录）。
 # 环境变量：CODEX_HOME（数据目录）、CODEX_APP_NAME（应用名，默认自动找 ChatGPT / Codex）、CODEX_BIN（CLI 路径）、
+#   CODEX_MODE_EXTRA_BINS（PATH 之外再找的几个 codex 路径，冒号分隔，置空表示不找）、
 #   CODEX_MODE_NO_REOPEN=1（切换后不重开应用）、CODEX_MODE_NONINTERACTIVE=1（需要输入时直接报错，供图形界面调用）、
 #   CODEX_MODE_FORCE=1（不退出应用、不检查进程，仅测试用）。
 #   非交互配置：CODEX_MODE_BASE_URL、CODEX_MODE_HEADERS（名称=值，逗号分隔）、CODEX_MODE_KEY_STDIN=1（从标准输入读 key，
 #   可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。
 set -eu
-CODEX_MODE_VERSION="2.2.4"
+CODEX_MODE_VERSION="2.2.5"
 
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CFG="$CODEX_HOME/config.toml"
@@ -45,17 +47,52 @@ if [ -z "$APP_NAME" ]; then
   done
   APP_NAME="${APP_NAME:-ChatGPT}"
 fi
-CODEX="${CODEX_BIN:-}"
-if [ -z "$CODEX" ]; then
+CODEX=""; CODEX_TRIED=""
+codex_tried() { CODEX_TRIED="$CODEX_TRIED  $1
+"; }
+find_codex() {  # 找 codex 命令行：结果写进 CODEX，找过的位置写进 CODEX_TRIED（找不到时要摆给用户看）
+  local d res entry p
+  if [ -n "${CODEX_BIN:-}" ]; then
+    if [ -x "$CODEX_BIN" ]; then CODEX="$CODEX_BIN"; return 0; fi
+    codex_tried "CODEX_BIN 指定的 ${CODEX_BIN}（不在或不可执行）"
+  fi
+  # 应用自带的那份位置变过：ChatGPT 26.924（2026-09-26）之前是 Contents/Resources/codex，之后搬进
+  # Contents/Resources/codex-cli/，入口写在同目录 codex-package.json 的 entrypoint 里（现在是 bin/codex，
+  # 一个 exec 掉 CodexCLI.app 里真二进制的壳）。所以按 老路径 → entrypoint → 已知的新路径 依次试。
   for d in /Applications "$HOME/Applications"; do
-    if [ -x "$d/$APP_NAME.app/Contents/Resources/codex" ]; then CODEX="$d/$APP_NAME.app/Contents/Resources/codex"; break; fi
+    res="$d/$APP_NAME.app/Contents/Resources"
+    if [ ! -d "$res" ]; then codex_tried "$d/$APP_NAME.app（不在这里）"; continue; fi
+    entry=""
+    if [ -f "$res/codex-cli/codex-package.json" ]; then
+      entry="$(sed -n 's/.*"entrypoint"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$res/codex-cli/codex-package.json" | head -n1)"
+      case "$entry" in ""|/*|*..*) entry="" ;; esac   # 只接受包内相对路径
+    fi
+    for p in "$res/codex" ${entry:+"$res/codex-cli/$entry"} "$res/codex-cli/bin/codex" \
+             "$res/codex-cli/CodexCLI.app/Contents/MacOS/codex"; do
+      if [ -x "$p" ]; then CODEX="$p"; return 0; fi
+      codex_tried "$p"
+    done
   done
-  [ -n "$CODEX" ] || CODEX="$(command -v codex || true)"
-fi
+  # 自己装的那份：菜单栏应用继承的 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin，Homebrew、npm、官方安装脚本装的
+  # codex 都不在里面，所以 command -v 之后再显式看几个常见位置（CODEX_MODE_EXTRA_BINS 可改，冒烟测试置空）
+  p="$(command -v codex || true)"
+  if [ -n "$p" ]; then CODEX="$p"; return 0; fi
+  codex_tried "PATH（${PATH}）里的 codex"
+  local extra IFS
+  extra="${CODEX_MODE_EXTRA_BINS-$HOME/.local/bin/codex:/opt/homebrew/bin/codex:/usr/local/bin/codex}"
+  IFS=:
+  for p in $extra; do
+    [ -n "$p" ] || continue
+    if [ -x "$p" ]; then CODEX="$p"; return 0; fi
+    codex_tried "$p"
+  done
+  return 1
+}
+find_codex || true
 
 say() { echo "$*" >&2; }
 die() { echo "错误：$*" >&2; exit 1; }
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 # ---------- 配置文件 ~/.codex/codex-mode.conf（key=value，不会被 source 执行） ----------
 conf_get() { if [ -f "$CONF" ]; then sed -n "s/^$1=//p" "$CONF" | head -n1; fi; }
@@ -303,7 +340,11 @@ restore_chatgpt_auth() {  # 有存档就恢复并确认 Codex 认它；成功返
   cp -p "$AUTH_STASH" "$AUTH_FILE"; chmod 600 "$AUTH_FILE"
   [ "$(auth_mode)" = chatgpt ]
 }
-need_codex() { [ -n "$CODEX" ] && [ -x "$CODEX" ] || die "找不到 Codex 命令行（应用里自带的 codex 或 PATH 里的 codex）：${CODEX:-未找到}，可用 CODEX_BIN 指定。"; }
+need_codex() {
+  [ -n "$CODEX" ] && [ -x "$CODEX" ] && return 0
+  die "找不到 Codex 命令行（$APP_NAME.app 里自带的 codex，或自己装的 codex）。找过这些位置：
+${CODEX_TRIED}请重新安装或更新 $APP_NAME 桌面应用，或用 CODEX_BIN 指定路径。"
+}
 
 check_key() {  # check_key URL KEY：登录前先用 key 探测地址，明确被拒（401/403）就停下，其他情况放行
   local code hdrs=() pair
@@ -475,6 +516,7 @@ case "$1" in
   fix-threads) mode_fix ;;
   mode) mode_word ;;
   version) echo "$CODEX_MODE_VERSION" ;;
+  codex-path) if [ -n "$CODEX" ]; then echo "$CODEX"; else printf '没找到，找过这些位置：\n%s' "$CODEX_TRIED" >&2; exit 1; fi ;;
   config) show_config ;;
   has-key) [ -n "${2:-}" ] && valid_url "$2" || die "用法：codex-mode has-key URL"; [ -n "$(kc_get "$(kc_service "$2")")" ] ;;
   find-key)  # 不问用户地找 key，找到退出码 0；只有目标地址就是配置里的网关时才做“当前在用的 / 旧版条目”迁移，别的地址只查钥匙串

@@ -43,7 +43,7 @@ dotnet publish src/AASwitch.Cli -c Release -r win-x64 --self-contained -p:Publis
 
 # 端到端（真的 claude / codex + 本地假网关），本机用临时目录，不碰自己的配置；先按上面的参数发布一份 -r osx-arm64 到 out-mac
 E2E_ISOLATED=1 node e2e/claude-e2e.mjs out-mac/aaswitch
-E2E_ISOLATED=1 CODEX_BIN=/Applications/ChatGPT.app/Contents/Resources/codex node e2e/codex-e2e.mjs out-mac/aaswitch
+E2E_ISOLATED=1 CODEX_BIN=$(bash ../codex-mode.sh codex-path) node e2e/codex-e2e.mjs out-mac/aaswitch
 ```
 
 推到 GitHub 后 `.github/workflows/windows.yml` 会在 Windows 机器上跑测试（含真实的凭据管理器读写）、两个端到端、托盘的 `--click` 和 `--render`，
