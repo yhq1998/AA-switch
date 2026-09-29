@@ -98,6 +98,8 @@ chmod +x "$T/bin"/*
 
 export HOME="$T/home" PATH="$T/bin:/usr/bin:/bin:/usr/sbin:/sbin" LANG=en_US.UTF-8
 unset LC_ALL 2>/dev/null || true
+# 从菜单栏应用、或被它重启过的应用里开的终端可能带着这些变量，会让脚本跳过提问 / 不问网关，测试结果就不对了
+for v in $(env | grep -oE '^(CLAUDE_MODE|CODEX_MODE)_[A-Z_]*='); do unset "${v%=}"; done
 export SMOKE_KEYCHAIN="$T/keychain" SMOKE_PROC="$T/proc"; mkdir -p "$SMOKE_PROC"
 export CODEX_HOME="$T/codex" CODEX_BIN="$T/bin/codex" CODEX_APP_NAME=Codex
 export CODEX_MODE_NONINTERACTIVE=1 CODEX_MODE_NO_REOPEN=1 CODEX_MODE_FORCE=1

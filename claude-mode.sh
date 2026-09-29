@@ -297,8 +297,11 @@ desktop_quit() {  # 桌面应用在运行就退出它，DESKTOP_WAS_RUNNING=1；
 }
 desktop_reopen() {  # 配合 desktop_quit：原来开着才重开；没开着就只改配置，下次打开生效
   if [ "$DESKTOP_WAS_RUNNING" != 1 ]; then say "${DESKTOP_APP} 没有在运行，下次打开时生效。"; return 0; fi
-  if [ "${CLAUDE_MODE_NO_REOPEN:-}" != 1 ]; then open -a "$DESKTOP_APP" >/dev/null 2>&1 || say "请手动打开 ${DESKTOP_APP}。"; fi
+  # 去掉图形界面传给本脚本的变量再打开：open 会把环境带给应用，之后应用里开的终端和会话都会继承（CLAUDE_MODE_MODELS 留着的话，
+  # 以后在那里跑 desktop models 就不问网关了）
+  if [ "${CLAUDE_MODE_NO_REOPEN:-}" != 1 ]; then clean_env open -a "$DESKTOP_APP" >/dev/null 2>&1 || say "请手动打开 ${DESKTOP_APP}。"; fi
 }
+clean_env() { env -u CLAUDE_MODE_MODELS -u CLAUDE_MODE_DRY_RUN -u CLAUDE_MODE_NONINTERACTIVE -u CLAUDE_MODE_BASE_URL -u CLAUDE_MODE_HEADERS -u CLAUDE_MODE_KEY_STDIN "$@"; }
 desktop_sessions_dir() {  # desktop_sessions_dir <数据目录> [账号 uuid] [组织 uuid]：该 profile 的 Code 会话记录目录；找不到输出空
   local root="$1/claude-code-sessions" acct="${2:-}" org="${3:-}" d best="" bestn=-1 n
   [ -d "$root" ] || return 0
