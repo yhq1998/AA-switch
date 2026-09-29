@@ -895,27 +895,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
     }
     // 一次切换可能是几条脚本命令（比如先切终端再切桌面应用），按顺序执行，哪条失败就停在哪条
-    private func doSwitch(_ p: Product, steps: [[String]], then: (() -> Void)? = nil) {
+    private func doSwitch(_ p: Product, steps: [[String]], extraEnv: [String: String] = [:], busyText: String? = nil, then: (() -> Void)? = nil) {
         guard !busy, !steps.isEmpty else { then?(); return }
         log("用户点击：\(p.name) 执行 " + steps.map { $0.joined(separator: " ") }.joined(separator: "，"))
         let restartsApp = p.resource == "codex-mode" || steps.contains { $0.first == "desktop" }
         busy = true
         busyProduct = p.name
-        busyText = restartsApp ? "正在切换 \(p.name)，应用会退出并重新打开…" : "正在切换 \(p.name)…"
+        self.busyText = busyText ?? (restartsApp ? "正在切换 \(p.name)，应用会退出并重新打开…" : "正在切换 \(p.name)…")
         render()
         DispatchQueue.global().async {
             let before = self.terminalSessions(p)   // 切换前已打开的会话切换后仍用旧配置，之后在菜单里提醒
             var failed: ([String], Result)? = nil
             var doneAny = false
             for args in steps {
-                let result = self.run(p, args)
+                let result = self.run(p, args, extraEnv: extraEnv)
                 if result.code != 0 { failed = (args, result); break }
                 doneAny = true
             }
             DispatchQueue.main.async {
                 self.busy = false
                 self.busyProduct = ""
-                self.staleSessions[p.name] = doneAny ? before : []
+                // 只改桌面应用配置（切换数据目录、换模型列表）不影响终端和 IDE，不用提醒已打开的会话
+                if steps.contains(where: { $0.first != "desktop" }) { self.staleSessions[p.name] = doneAny ? before : [] }
                 self.refresh()
                 if let (args, result) = failed {
                     let text = (result.err + "\n" + result.out).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -926,6 +927,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             }
         }
     }
+    // MARK: 更新桌面应用能选的模型列表。分两步：先只问网关要一份（不写任何东西），把变化摆给用户看，确认了再写配置，
+    // 免得点一下就悄悄重启了桌面应用。第二步把确认过的列表原样传回脚本，不再问一次网关。
+    @objc private func updateClaudeModels() {
+        guard !busy else { return }
+        log("用户点击：更新最新模型列表")
+        busy = true
+        busyProduct = claude.name
+        busyText = "正在问网关要模型列表…"
+        render()
+        DispatchQueue.global().async {
+            let result = self.run(self.claude, ["desktop", "models"], extraEnv: ["CLAUDE_MODE_DRY_RUN": "1"])
+            DispatchQueue.main.async {
+                self.busy = false
+                self.busyProduct = ""
+                self.render()
+                var fields: [String: String] = [:]
+                for line in result.out.split(separator: "\n") {
+                    guard let eq = line.firstIndex(of: "=") else { continue }
+                    fields[String(line[..<eq])] = String(line[line.index(after: eq)...])
+                }
+                let models = fields["models"] ?? ""
+                guard result.code == 0, !models.isEmpty else {
+                    let text = (result.err + "\n" + result.out).trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.showError(title: "拿不到模型列表（退出码 \(result.code)）", text: text, retry: (self.claude, "desktop models"))
+                    return
+                }
+                self.confirmModels(models, current: fields["current"] ?? "", gateway: fields["desktop"] == "gateway")
+            }
+        }
+    }
+    private func confirmModels(_ models: String, current: String, gateway: Bool) {
+        let list = models.split(separator: ",").map(String.init)
+        let old = current.split(separator: ",").map(String.init)
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        if models == current {
+            alert.messageText = "模型列表已经是最新的"
+            alert.informativeText = "网关现在提供这 \(list.count) 个模型，和配置里的一样：\n" + list.joined(separator: "\n")
+            alert.addButton(withTitle: "好")
+            alert.runModal()
+            return
+        }
+        var lines = ["网关现在提供这 \(list.count) 个模型："]
+        lines += list.map { "　" + $0 + ($0 == list.first ? "（默认）" : "") }
+        let added = list.filter { !old.contains($0) }, gone = old.filter { !list.contains($0) }
+        if !added.isEmpty { lines.append("新增：" + added.joined(separator: "、")) }
+        if !gone.isEmpty { lines.append("不再提供：" + gone.joined(separator: "、")) }
+        if list.first != old.first { lines.append("默认模型：\(old.first ?? "无") → \(list.first ?? "无")") }
+        lines.append(gateway ? "Claude 桌面应用现在走网关，更新后会退出并重新打开，新列表马上能选。"
+                             : "Claude 桌面应用现在是账号模式，下次切到网关模式时用这份列表。")
+        alert.messageText = "更新模型列表"
+        alert.informativeText = lines.joined(separator: "\n")
+        alert.addButton(withTitle: gateway ? "更新并重启" : "更新")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { log("用户取消了更新模型列表"); return }
+        doSwitch(claude, steps: [["desktop", "models"]], extraEnv: ["CLAUDE_MODE_MODELS": models],
+                 busyText: gateway ? "正在更新模型列表，Claude 桌面应用会退出并重新打开…" : "正在更新模型列表…")
+    }
+
     private func showError(title: String, text: String, retry: (Product, String)) {
         let alert = NSAlert()
         alert.messageText = title
@@ -1383,6 +1443,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             more.addItem(item(p.resource == "codex-mode" ? "重新应用 API 配置并重启 Codex" : (claudeDesktop ? "重新应用 API 配置并重启 Claude 桌面应用" : "重新应用 API 配置"), toApi))
         }
         more.addItem(item("打开备份文件夹", backups))
+        if desktop {   // 网关提供的模型会变，点一下从网关拉一份最新的，不用手改 claude-mode.conf
+            more.addItem(item("更新最新模型列表…", #selector(updateClaudeModels), enabled: !busy))
+        }
         let details = info.filter { !isWarning($0) && $0.key != "模式" && !Self.urlKeys.contains($0.key) }
         more.addItem(.separator())
         if !loaded { more.addItem(item("正在读取状态…", nil, enabled: false)) }

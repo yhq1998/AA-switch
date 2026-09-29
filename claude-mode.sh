@@ -11,6 +11,7 @@
 #   claude-mode desktop gateway   Claude 桌面应用（Code 标签）也走网关：写入桌面应用的第三方推理配置并重启它
 #   claude-mode desktop account   Claude 桌面应用切回账号：重启它
 #   claude-mode desktop sync      把账号模式和网关模式两边的 Code 会话列表互相补齐、Cowork 会话互相同步（切换时会自动做，这是手动触发）
+#   claude-mode desktop models    问网关要一份模型列表，更新桌面应用里能选的模型（当前就在网关模式时顺带重新应用并重启它）
 #   claude-mode desktop-mode 只输出一个词 gateway / account / absent（桌面应用当前走哪边），供程序读取
 #   claude-mode status       查看当前模式（不显示 key）
 #   claude-mode configure    设置或修改 API 地址、额外请求头和 key（图形界面可用环境变量非交互传入，见下）
@@ -35,11 +36,14 @@
 #   CLAUDE_DESKTOP_DATA_DIR（桌面应用数据目录，默认 ~/Library/Application Support/Claude，测试用）。
 # 桌面应用的第三方推理模式：地址和 key 写在 <数据目录>-3p/configLibrary/<id>.json，账号 / 网关的选择写在
 #   <数据目录>-3p/claude_desktop_config.json 的 deploymentMode（1p 账号，3p 网关），启动时生效。配置项 desktop_base_url（默认同
-#   base_url，不带 /v1）和 desktop_models（逗号分隔的模型名，默认 claude-fable-5-1,claude-fable-5,claude-opus-5，第一个是默认模型）可在 claude-mode.conf 里改。
+#   base_url，不带 /v1）和 desktop_models（逗号分隔的模型名，默认 claude-opus-5-5,claude-sonnet-5,claude-haiku-4-5,claude-fable-5-1，
+#   第一个是默认模型）可在 claude-mode.conf 里改，也可以用 desktop models 命令从网关拉一份最新的覆盖它。
 #   非交互配置：CLAUDE_MODE_BASE_URL、CLAUDE_MODE_HEADERS（名称=值，逗号分隔）、CLAUDE_MODE_KEY_STDIN=1（从标准输入读
-#   key，可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。
+#   key，可为空表示沿用已保存的）；三者任一设置时 configure 不再提问。desktop models 也认两个变量：CLAUDE_MODE_MODELS
+#   （直接给定列表，不问网关，供图形界面把用户确认过的列表写回来）、CLAUDE_MODE_DRY_RUN=1（只打印 models= / current= /
+#   desktop=，什么都不写，供图形界面先弹确认框）。
 set -eu
-CLAUDE_MODE_VERSION="1.3.0"
+CLAUDE_MODE_VERSION="1.4.0"
 
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS="$CLAUDE_HOME/settings.json"
@@ -51,10 +55,12 @@ DESKTOP_DATA="${CLAUDE_DESKTOP_DATA_DIR:-$HOME/Library/Application Support/Claud
 DESKTOP_CONF="${DESKTOP_DATA}-3p/claude_desktop_config.json"   # 注意：在 -3p 目录，不在主目录（应用代码里 hl() 固定加 -3p 后缀）
 DESKTOP_LIB="${DESKTOP_DATA}-3p/configLibrary"
 DESKTOP_APP="Claude"
+# 没配过 desktop_models 时用的列表（第一个是桌面应用的默认模型）；用 desktop models 命令可以换成网关当前真正提供的那些
+DESKTOP_MODELS_DEFAULT="claude-opus-5-5,claude-sonnet-5,claude-haiku-4-5,claude-fable-5-1"
 
 say() { echo "$*" >&2; }
 die() { echo "错误：$*" >&2; exit 1; }
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 # ---------- 配置文件（key=value，不会被 source 执行） ----------
 conf_get() { if [ -f "$CONF" ]; then sed -n "s/^$1=//p" "$CONF" | head -n1; fi; }
@@ -487,7 +493,7 @@ mode_desktop_gateway() {
   local key url models; key="$(get_key)" || exit 1
   check_key "$BASE_URL" "$key"
   url="$(conf_get desktop_base_url)"; url="${url:-${BASE_URL%/}}"   # 不带 /v1：桌面应用把地址交给 Claude Code 引擎，引擎自己加 /v1/messages
-  models="$(conf_get desktop_models)"; models="${models:-claude-fable-5-1,claude-fable-5,claude-opus-5}"
+  models="$(conf_get desktop_models)"; models="${models:-$DESKTOP_MODELS_DEFAULT}"
   backup_desktop
   desktop_json write-gateway "$url" "$key" "$models" >/dev/null || die "写入桌面应用的网关配置失败。"
   chmod 600 "$DESKTOP_LIB"/*.json 2>/dev/null || true   # 里面有 key
@@ -507,6 +513,106 @@ mode_desktop_account() {
   desktop_sync_cowork
   say "已把 ${DESKTOP_APP} 切回账号模式。"
   desktop_reopen
+}
+
+# ---------- 桌面应用能选的模型列表 ----------
+clean_models() {  # 去掉空格和空项，校验字符；不合法就报错。输出规范化后的逗号分隔列表
+  local out="" item pieces=()
+  IFS=',' read -r -a pieces <<< "$1"
+  for item in "${pieces[@]+"${pieces[@]}"}"; do
+    item="${item#"${item%%[![:space:]]*}"}"; item="${item%"${item##*[![:space:]]}"}"
+    [ -n "$item" ] || continue
+    case "$item" in *[!A-Za-z0-9._-]*) die "模型名里有不该有的字符：${item}" ;; esac
+    out="${out:+$out,}$item"
+  done
+  printf '%s' "$out"
+}
+gateway_models() {  # gateway_models URL KEY：问网关要 /v1/models，输出逗号分隔的 Claude 模型名（新的排前面）
+  local code body hdrs=() line list
+  while IFS= read -r line; do [ -n "$line" ] && hdrs+=(-H "$line"); done <<< "$(pairs_to_header_lines "$HEADERS")"
+  body="$(mktemp "${TMPDIR:-/tmp}/claude-mode-models.XXXXXX")"
+  code="$(curl -s -m 20 -o "$body" -w '%{http_code}' "${1%/}/v1/models" -H "Authorization: Bearer $2" ${hdrs[@]+"${hdrs[@]}"} 2>/dev/null || echo 000)"
+  case "$code" in
+    2??) ;;
+    401|403) rm -f "$body"; die "这个 API key 在 ${1} 上无效（HTTP ${code}），拿不到模型列表。" ;;
+    000) rm -f "$body"; die "连不上 ${1%/}/v1/models（超时或域名不对）。" ;;
+    *) rm -f "$body"; die "${1%/}/v1/models 返回了 HTTP ${code}，拿不到模型列表。" ;;
+  esac
+  list="$(pick_claude_models "$body")" || { rm -f "$body"; die "看不懂 ${1%/}/v1/models 的返回内容。"; }
+  rm -f "$body"
+  [ -n "$list" ] || die "${1} 没有提供任何 Claude 模型，模型列表没有改动。"
+  printf '%s' "$list"
+}
+pick_claude_models() {  # pick_claude_models 文件：从 /v1/models 的返回里挑出 Claude 模型，排好序输出（逗号分隔）
+  osascript -l JavaScript - "$1" <<'EOF'
+ObjC.import('Foundation');
+function run(argv) {
+  const s = $.NSString.stringWithContentsOfFileEncodingError(argv[0], $.NSUTF8StringEncoding, null);
+  if (s.isNil()) throw new Error('读不到返回内容');
+  const o = JSON.parse(ObjC.unwrap(s));
+  const rows = Array.isArray(o) ? o : (Array.isArray(o.data) ? o.data : (Array.isArray(o.models) ? o.models : []));
+  const ids = [];
+  for (const row of rows) {
+    const id = typeof row === 'string' ? row : (row && typeof row.id === 'string' ? row.id : '');
+    if (!id.startsWith('claude-')) continue;   // 网关上还有别家的模型，桌面应用只认 Claude
+    // 网关（非官方字段）说明了这个模型支持哪些接口时，只要能走 anthropic 接口的
+    const kinds = row && row.supported_endpoint_types;
+    if (Array.isArray(kinds) && kinds.length && kinds.indexOf('anthropic') < 0) continue;
+    if (ids.indexOf(id) < 0) ids.push(id);
+  }
+  // claude-haiku-4-5-20251001 这类带日期的别名，同名的不带日期版本也在时就不重复列
+  const all = new Set(ids);
+  const kept = ids.filter(id => !(/-20\d{6}$/.test(id) && all.has(id.replace(/-20\d{6}$/, ''))));
+  // 排序：opus → sonnet → haiku → 其余按字母；同一系列里版本号大的在前（claude-opus-5-5 比 claude-opus-5 新）
+  const rank = { opus: 0, sonnet: 1, haiku: 2 };
+  const parse = id => {
+    const parts = id.slice('claude-'.length).split('-');
+    return { family: parts.filter(p => !/^\d+$/.test(p)).join('-'),
+             version: parts.filter(p => /^\d+$/.test(p)).map(Number) };
+  };
+  kept.sort((a, b) => {
+    const x = parse(a), y = parse(b);
+    const rx = rank[x.family] === undefined ? 3 : rank[x.family], ry = rank[y.family] === undefined ? 3 : rank[y.family];
+    if (rx !== ry) return rx - ry;
+    if (x.family !== y.family) return x.family < y.family ? -1 : 1;
+    for (let i = 0; i < Math.max(x.version.length, y.version.length); i++) {
+      const vx = x.version[i] === undefined ? -1 : x.version[i], vy = y.version[i] === undefined ? -1 : y.version[i];
+      if (vx !== vy) return vy - vx;
+    }
+    return a < b ? -1 : 1;
+  });
+  return kept.join(',');
+}
+EOF
+}
+mode_desktop_models() {
+  desktop_installed || die "这台电脑上没有找到 ${DESKTOP_APP}.app。"
+  load_conf
+  local models current key
+  current="$(conf_get desktop_models)"; current="${current:-$DESKTOP_MODELS_DEFAULT}"
+  if [ -n "${CLAUDE_MODE_MODELS:-}" ]; then   # 图形界面把用户确认过的列表原样写回来，不再问一遍网关
+    models="$(clean_models "$CLAUDE_MODE_MODELS")"
+    [ -n "$models" ] || die "CLAUDE_MODE_MODELS 里没有模型名。"
+  else
+    [ -n "$BASE_URL" ] || die "还没有配置 API 地址，请先运行 claude-mode configure。"
+    key="$(get_key)" || exit 1
+    models="$(gateway_models "$BASE_URL" "$key")"
+  fi
+  if [ "${CLAUDE_MODE_DRY_RUN:-}" = 1 ]; then   # 只看看会改成什么，什么都不写（图形界面先弹确认框）
+    echo "models=$models"; echo "current=$current"; echo "desktop=$(desktop_mode)"
+    return 0
+  fi
+  conf_set desktop_models "$models"
+  if [ "$models" = "$current" ]; then
+    say "模型列表已经是最新的（共 $(printf '%s' "$models" | awk -F, '{print NF}') 个，默认 ${models%%,*}）。"
+    return 0
+  fi
+  say "模型列表已更新（共 $(printf '%s' "$models" | awk -F, '{print NF}') 个，默认 ${models%%,*}）：${models}"
+  if [ "$(desktop_mode)" = gateway ]; then
+    mode_desktop_gateway   # 当前就在网关模式：重新写一遍桌面配置并重启应用，让新列表马上能选
+  else
+    say "${DESKTOP_APP} 现在是账号模式，下次切到网关模式时用这份列表。"
+  fi
 }
 
 # ---------- 各命令 ----------
@@ -535,7 +641,7 @@ mode_account() {
 mode_status() {
   load_conf >/dev/null 2>&1 || true
   read_env
-  local active email; active="$(env_field "$ENVJSON" base_url)"
+  local active email models; active="$(env_field "$ENVJSON" base_url)"
   if [ -n "$active" ]; then
     echo "模式：API（终端和 IDE 插件）"
     echo "请求发往：${active}"
@@ -549,6 +655,10 @@ mode_status() {
     if [ -n "$BASE_URL" ]; then echo "API 地址（切换后使用）：${BASE_URL}"; else echo "API 地址（切换后使用）：未配置"; fi
   fi
   email="$(account_email)"
+  if desktop_installed; then   # 桌面应用网关模式下能选哪些模型（改用 desktop models 命令更新）
+    models="$(conf_get desktop_models)"; models="${models:-$DESKTOP_MODELS_DEFAULT}"
+    echo "桌面模型：默认 ${models%%,*}，共 $(printf '%s' "$models" | awk -F, '{print NF}') 个"
+  fi
   # 注意：系统自带的 bash 3.2 在 UTF-8 locale 下，${x:+中文} 这类展开会把多字节字符当成变量名，所以用 if 拼
   if account_logged_in; then
     if [ -n "$email" ]; then echo "账号：已登录（${email}）"; else echo "账号：已登录"; fi
@@ -608,8 +718,8 @@ case "$1" in
   forget-key) forget_key ;;
   mode) mode_word ;;
   desktop-mode) desktop_mode ;;
-  desktop) case "${2:-}" in gateway) mode_desktop_gateway ;; account) mode_desktop_account ;; sync) desktop_installed || die "没有找到 ${DESKTOP_APP}.app。"; backup_desktop; desktop_sync_sessions
-      if desktop_running; then say "Cowork 会话要在 ${DESKTOP_APP} 退出后才能同步（切换时会自动做），这次跳过。"; else desktop_sync_cowork; fi ;; *) die "用法：claude-mode desktop gateway|account|sync" ;; esac ;;
+  desktop) case "${2:-}" in gateway) mode_desktop_gateway ;; account) mode_desktop_account ;; models) mode_desktop_models ;; sync) desktop_installed || die "没有找到 ${DESKTOP_APP}.app。"; backup_desktop; desktop_sync_sessions
+      if desktop_running; then say "Cowork 会话要在 ${DESKTOP_APP} 退出后才能同步（切换时会自动做），这次跳过。"; else desktop_sync_cowork; fi ;; *) die "用法：claude-mode desktop gateway|account|sync|models" ;; esac ;;
   version) echo "$CLAUDE_MODE_VERSION" ;;
   config) show_config ;;
   has-key|find-key) [ -n "${2:-}" ] && valid_url "$2" || die "用法：claude-mode has-key URL"; [ -n "$(kc_get "$(kc_service "$2")")" ] ;;

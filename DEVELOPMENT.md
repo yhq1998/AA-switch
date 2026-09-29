@@ -17,6 +17,7 @@
 ~/.claude/claude-mode account    # 切回 Claude 账号：删掉 env 块里的那几项，账号登录态一直都在
 ~/.claude/claude-mode status
 ~/.claude/claude-mode configure  # 地址填网关根地址（不带 /v1）；首次运行会沿用 codex-mode 的地址去掉 /v1
+~/.claude/claude-mode desktop models   # 问网关要一份模型列表，更新桌面应用里能选的模型（当前就在网关模式时顺带重新应用并重启它）
 ```
 
 没有签名包时也可以用一行命令安装（curl 下载的文件不带隔离标记，Gatekeeper 不拦）：
@@ -123,7 +124,7 @@ UPDATE_URL=https://aaswitch.example.com/download/latest.json \
 
 产出 `menubar/dist/AA Switch.dmg`（已签名、已公证、已装订）和 `AASwitch.app.tar.gz`。
 
-**冒烟测试。** `build.sh` 第一步会跑仓库根目录的 `smoke-test.sh`（约 7 秒），不通过就不出包；改了脚本也可以随时单独跑 `./smoke-test.sh`。它在一个空的临时家目录里模拟刚装上的新用户，用系统自带的 bash 3.2 把两个脚本的主要路径各跑一遍并检查写出的文件：状态、配置、切到 API、切回账号、key 被拒（401/403）和登录失败时的回滚、备份清理、用户原有配置是否保留、桌面应用的网关模式和会话同步。钥匙串、curl、pgrep、open、codex 命令行都换成假替身，osascript 只放行读写 JSON 的 JavaScript，所以不碰真实配置、不会退出正在用的应用。发出去的每个版本都会通过 `latest.json` 立刻推给所有用户，而自己机器上“备份早就超过 20 份”这类状态会掩盖新用户才遇到的问题（2.2.3–2.2.5 切换必失败就是这么漏出去的），所以新增脚本功能时顺手在这里加一条断言。它测不到菜单和弹窗、真实网关，以及真的 Codex / Claude 对配置的反应。
+**冒烟测试。** `build.sh` 第一步会跑仓库根目录的 `smoke-test.sh`（约 7 秒），不通过就不出包；改了脚本也可以随时单独跑 `./smoke-test.sh`。它在一个空的临时家目录里模拟刚装上的新用户，用系统自带的 bash 3.2 把两个脚本的主要路径各跑一遍并检查写出的文件：状态、配置、切到 API、切回账号、key 被拒（401/403）和登录失败时的回滚、备份清理、用户原有配置是否保留、桌面应用的网关模式和会话同步、从网关更新桌面模型列表、找 codex 命令行的几种应用包布局。钥匙串、curl、pgrep、open、codex 命令行都换成假替身，osascript 只放行读写 JSON 的 JavaScript，所以不碰真实配置、不会退出正在用的应用。发出去的每个版本都会通过 `latest.json` 立刻推给所有用户，而自己机器上“备份早就超过 20 份”这类状态会掩盖新用户才遇到的问题（2.2.3–2.2.5 切换必失败就是这么漏出去的），所以新增脚本功能时顺手在这里加一条断言。它测不到菜单和弹窗、真实网关，以及真的 Codex / Claude 对配置的反应。
 
 **版本号与更新提示。** dmg 的文件名固定是 `AA Switch.dmg`（官网 URL 写作 `AA%20Switch.dmg`，浏览器保存时还原成带空格的名字；deploy.sh 另存一份 `AA-Switch.dmg` 兼容旧链接；服务器 Caddy 对这两个路径都下发 `Content-Disposition: attachment; filename="AA Switch.dmg"`，所以从任何入口、任何浏览器下载保存的都是这个名字；GitHub Release 的资产名不允许空格，会显示成 `AA.Switch.dmg`，内容相同），版本号不放文件名里，而是：`site/deploy.sh` 上传时顺带生成 `download/latest.json`（版本、日期、地址、sha256）；官网在下载按钮下显示"当前版本 vX.Y.Z"；App 构建时通过 `UPDATE_URL` 记住这个地址，启动时和之后每 6 小时读一次，发现比自己新就在菜单底部显示"有新版本 X.Y.Z，点击更新…"。点了就是应用内更新：下载 `download/AASwitch.app.tar.gz`（deploy.sh 一并上传），依次校验 sha256（latest.json 里的 `tgz_sha256`）、`codesign --verify --deep --strict`、签名 Team ID 与当前安装一致、版本号更新，全过了才写一个小脚本等本进程退出后替换 `/Applications/AA Switch.app` 并重新打开；任一步失败不动现有安装，弹窗给下载页。ad-hoc 签名的开发版不做 Team ID 比对。老于 2.2.0 的版本没有检查更新的逻辑，只能人工通知一次。App 的版本号取仓库根目录的 `VERSION` 文件（Mac 和 Windows 共用，发版前改这一个地方；也可用 `VERSION=` 覆盖）；GitHub Release 的 tag 用同一个版本号，两个平台的安装包放在同一个 Release 里。把 dmg 放到任何能下载的地方发给同事即可。三个 `DEFAULT_*` 都可不填，不填时首次切换会从已有 `config.toml` 推断地址，推断不到就交互询问。
 
@@ -150,6 +151,9 @@ VITE_DOWNLOAD_URL=https://aaswitch.example.com/download/AA%20Switch.dmg DEPLOY_T
 老版本的 App 只读顶层，不受影响。两个平台可以分开发布：这次没带上安装包的平台，服务器上已有的文件和 `latest.json` 里它的那部分原样保留
 （以线上现有的 `latest.json` 为底合并，rsync 对缺的安装包加 protect）。
 
+Claude 桌面应用的切换（网关模式 / 账号模式、Code 和 Cowork 会话同步）在 Windows 上由 `ClaudeDesktop` / `DesktopSessions` 实现，逻辑照搬 `claude-mode.sh` 的 desktop 部分，
+路径差异见 windows/README.md；改 `claude-mode.sh` 的 desktop 逻辑时记得两边一起改。
+
 官网上两个平台的下载按钮并排，访客自己的系统排在前面；顶部导航的“下载”悬停（触屏上点一下）展开下拉框，可选 macOS 版或 Windows 版。
 `latest.json` 里还没有 `windows` 段时只有 macOS 按钮，“下载”也只是普通链接。地址加 `?os=windows` / `?os=mac` 可以指定哪个平台排在前面。
 
@@ -172,8 +176,8 @@ Windows 版目前没有代码签名，所以只信 https，且下载地址必须
 - 内置的 `openai` 不允许被覆盖，记成 `openai` 的会话会把首行 `session_meta` 里的 provider 改成默认名，数据库里对应字段一并更新。会话正文不动。
 - 写入前把 `config.toml`、`auth.json`、要改的会话文件和数据库快照复制到 `~/.codex/codex-mode-backups/<时间>/`；写完让 Codex 读一遍新配置（`codex login status`，它会完整加载配置且不联网，比 `codex doctor` 快几秒），读不通或登录失败就整体恢复。
 - 切换前若处于 ChatGPT 登录态，把 `auth.json` 存一份到 `~/.codex/codex-mode-auth/chatgpt.json`；切回账号模式时直接恢复，不用重新登录。token 过期时 Codex 会自己提示登录。
-
 - **找 codex 命令行的位置会变，所以按顺序探好几个地方**（`codex-mode codex-path` 输出探到的那一个，探不到就列出找过的位置，诊断信息里也有这一行）。ChatGPT 26.924（2026-09-26 的自动更新）把自带的 CLI 从 `Contents/Resources/codex` 搬进了 `Contents/Resources/codex-cli/`：入口写在同目录 `codex-package.json` 的 `entrypoint`（现在是 `bin/codex`，一个 `exec` 掉 `CodexCLI.app/Contents/MacOS/codex` 的壳），旁边还有 `codex-resources/`、`codex-path/`。只探老路径的版本（2.2.4 及以前）从那天起对所有人都是「切换失败：找不到 Codex 命令行」——`api`、`chatgpt`、`fix-threads` 三条命令开头都要 `need_codex`，只有 `status` 还能跑，所以菜单上一切正常、一点就失败。顺序是：`CODEX_BIN` → 老路径 → `entrypoint`（只接受包内相对路径）→ 已知的新路径 → `CodexCLI.app` 里的真二进制 → `PATH` → `CODEX_MODE_EXTRA_BINS` 里那几个（`~/.local/bin`、Homebrew、`/usr/local/bin`；菜单栏应用继承的 `PATH` 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，自己装的 codex 全不在里面）。`codex login status` 的措辞新版没变，`auth_mode` 照样认得。
+
 ### Claude Code（claude-mode.sh）
 
 - Claude Code 的凭据优先级里，环境变量 `ANTHROPIC_AUTH_TOKEN` 排在账号登录之前，且 `~/.claude/settings.json` 的 `env` 块对终端和 IDE 里的每个新会话生效。所以切 API 只是往 `env` 块写 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`（有额外请求头再写 `ANTHROPIC_CUSTOM_HEADERS`），切回账号只是删掉它们。用 `ANTHROPIC_AUTH_TOKEN` 而不是 `ANTHROPIC_API_KEY`，后者首次使用会弹确认。
@@ -186,7 +190,8 @@ Windows 版目前没有代码签名，所以只信 https，且下载地址必须
   - **Cowork 会话**也按数据目录各存一份：`<数据目录>/local-agent-mode-sessions/<账号>/<组织>/local_<id>.json` 加同名目录（网关模式下是 `<账号前 8 位>/<组织前 8 位>`，例如 `c0062ea9/00000000`）。和 Code 标签不同，对话记录（目录里的 `.claude/projects/<按 cwd 命名>/<cliSessionId>.jsonl`）、`outputs`、`uploads` 都在这个目录里，不共享，所以 `desktop_sync_cowork` 整份复制（APFS 克隆，不额外占空间），把 `local_<id>.json` 和 `.claude/` 下 json/jsonl 里指向原位置的绝对路径、以及按路径命名的目录改到新位置；`audit.jsonl` 带签名（同目录的 `.audit-key`），原样保留。实测（2026-09-24）：复制过去的会话在网关模式下出现在列表里，能打开，接着聊时模型带着之前的上下文回答。
   - 复制后两份各自往下走，所以 `~/.claude/claude-mode-cowork-sync` 记着每个会话上次同步时的 `lastActivityAt`：只有一边比它新就用那边覆盖另一边（旧的挪进本次备份的 `cowork/`），两边都新了算冲突、都不动；记录里有但某一边没了，当作在那边删掉了，不补回去。同步在应用退出之后、重新打开之前做；`desktop sync` 手动触发时应用开着就跳过 Cowork。
   - 桌面应用启动时会做一次健康检查，日志（`~/Library/Logs/Claude-3p/main.log`）里 `ConfigHealth` 为 `config_model_rejected` 表示网关对模型请求回了 404（多半是地址多带了 `/v1`，见下一条；也可能真是模型名不对），`auth_failed` / `unreachable` 分别对应 key 和地址问题。
-  - 桌面地址默认和 `base_url` 一样，**不带 `/v1`**：官方文档的示例带 `/v1`，但桌面应用把地址原样交给内置的 Claude Code 引擎，引擎自己再加 `/v1/messages`，带了就变成 `/v1/v1/messages`，网关回 404，应用把它报成"模型不存在"（日志里 `Gateway rejected model … (HTTP 404)`、健康检查 `config_model_rejected`）。模型列表默认 `claude-fable-5-1,claude-fable-5,claude-opus-5`，第一个是默认模型；`claude-mode.conf` 里的 `desktop_base_url`、`desktop_models` 可改。
+  - 桌面地址默认和 `base_url` 一样，**不带 `/v1`**：官方文档的示例带 `/v1`，但桌面应用把地址原样交给内置的 Claude Code 引擎，引擎自己再加 `/v1/messages`，带了就变成 `/v1/v1/messages`，网关回 404，应用把它报成"模型不存在"（日志里 `Gateway rejected model … (HTTP 404)`、健康检查 `config_model_rejected`）。模型列表默认 `claude-opus-5-5,claude-sonnet-5,claude-haiku-4-5,claude-fable-5-1`，第一个是默认模型；`claude-mode.conf` 里的 `desktop_base_url`、`desktop_models` 可改。
+  - **模型列表可以从网关拉**：菜单里 Claude Code 的“更多 → 更新最新模型列表…”（装了桌面应用才显示），或命令行 `claude-mode desktop models`。脚本请求网关的 `/v1/models`，只留 `claude-*`（有 `supported_endpoint_types` 时必须含 `anthropic`，桌面应用只走 Anthropic 接口），去掉和不带日期的同名模型重复的 `-20YYMMDD` 别名，按 opus → sonnet → haiku → 其余字母序排，同系列版本号大的在前，所以最新的 Opus 是默认模型。菜单里分两步：先用 `CLAUDE_MODE_DRY_RUN=1` 只问不写，把新增 / 不再提供 / 默认模型的变化摆给用户看，确认后再把这份列表用 `CLAUDE_MODE_MODELS=` 传回脚本写进 conf（不再问第二次网关）。当时就在网关模式的话顺带重新应用并重启桌面应用，账号模式只写 conf、下次切过去时生效。
 - **切到 API 前 App 先确认配好了**：地址来自 status，key 用 `find-key URL`（Codex 会顺带把当前在用的 key 或旧版钥匙串条目迁移到 `codex-mode:<域名>`，但只对配置里那个网关的域名做迁移）；缺一样就先弹配置表单，保存后接着切，用户取消就不切。表单保存时会规范化地址（去空格和末尾斜杠；Codex 只给域名就补 `/v1`，Claude 去掉 `/v1`）并用 key 请求一次 models 接口：2xx 通过，401/403 判定 key 无效不让存，连不上或 404 弹确认框可"仍然保存"。
 - 会话是本地 jsonl 文件，与后端无关；账号登录态在钥匙串里，脚本不碰。所以不用退出重开、不用备份登录态、不用修会话。
 - JSON 用系统自带的 `osascript -l JavaScript` 读写，其他键原样保留，写前备份到 `~/.claude/claude-mode-backups/<时间>/`。
@@ -221,3 +226,5 @@ Windows 版目前没有代码签名，所以只信 https，且下载地址必须
 | `CODEX_MODE_NONINTERACTIVE=1` | 需要输入时直接报错，供图形界面调用 |
 | `CODEX_SETUP_URL` | setup.sh 安装时临时指定托管目录 |
 | `CODEX_SETUP_NO_MENUBAR=1` | setup.sh 只装脚本，不装菜单栏工具 |
+| `CLAUDE_MODE_MODELS` | `desktop models` 直接用这份列表（逗号分隔），不问网关；菜单确认过之后就这么写回去 |
+| `CLAUDE_MODE_DRY_RUN=1` | `desktop models` 只打印 `models=` / `current=` / `desktop=`，什么都不写 |

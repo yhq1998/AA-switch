@@ -42,7 +42,12 @@ esac
 EOF
 cat > "$T/bin/curl" <<'EOF'
 #!/bin/bash
-# 假网关：只回一个 HTTP 状态码（脚本用 -w '%{http_code}' 取它）
+# 假网关：回一个 HTTP 状态码（脚本用 -w '%{http_code}' 取它）。带 -o 文件时把 $SMOKE_BODY 当响应体写进去
+out=""
+while [ $# -gt 0 ]; do
+  case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac
+done
+[ -n "$out" ] && printf '%s' "${SMOKE_BODY:-}" > "$out"
 printf '%s' "${SMOKE_HTTP_CODE:-200}"
 EOF
 cat > "$T/bin/pgrep" <<'EOF'
@@ -200,11 +205,6 @@ run codex forget-key; ok "forget-key"
 run codex has-key "$GW/v1"; fails "forget-key 之后 has-key"
 printf '%s\n' "$KEY" > "$SMOKE_KEYCHAIN/codex-mode_gw.example.test"   # 放回去，Claude 那边共用这个 key
 
-# ==================== Claude Code ====================
-echo "· claude-mode $(/bin/bash "$SCRIPTS/claude-mode.sh" version 2>/dev/null)"
-SETTINGS="$CLAUDE_CONFIG_DIR/settings.json"
-run claude mode; ok "全新环境 mode"; eq "没用过 Claude Code 是 absent" "$OUT" absent
-printf '{ "oauthAccount": { "emailAddress": "smoke@example.test", "accountUuid": "11111111-1111-1111-1111-111111111111", "organizationUuid": "22222222-2222-2222-2222-222222222222" } }\n' > "$HOME/.claude.json"
 # ---------- 找 codex 命令行 ----------
 # 自带的那份位置变过（ChatGPT 26.924 把 Contents/Resources/codex 搬进了 codex-cli/），只探老路径的版本发出去
 # 之后所有人的切换都失败，而这台机器上 CODEX_BIN 和 PATH 里都有 codex，谁也看不出来。所以这里不给 CODEX_BIN，
@@ -241,6 +241,11 @@ OUT="$(env CODEX_BIN="$T/nope/codex" CODEX_MODE_EXTRA_BINS="$T/bin/codex" PATH=/
   /bin/bash "$SCRIPTS/codex-mode.sh" codex-path 2>/dev/null)"
 eq "CODEX_BIN 指的文件不在时接着往下找" "$OUT" "$T/bin/codex"
 
+# ==================== Claude Code ====================
+echo "· claude-mode $(/bin/bash "$SCRIPTS/claude-mode.sh" version 2>/dev/null)"
+SETTINGS="$CLAUDE_CONFIG_DIR/settings.json"
+run claude mode; ok "全新环境 mode"; eq "没用过 Claude Code 是 absent" "$OUT" absent
+printf '{ "oauthAccount": { "emailAddress": "smoke@example.test", "accountUuid": "11111111-1111-1111-1111-111111111111", "organizationUuid": "22222222-2222-2222-2222-222222222222" } }\n' > "$HOME/.claude.json"
 run claude mode; ok "mode"; eq "用过但没切过是 account" "$OUT" account
 run claude config; ok "config"; has "沿用 codex-mode 的网关并去掉 /v1" "$OUT" "base_url=$GW"; hasnt "去掉了 /v1" "$OUT" "/v1"
 run claude status; ok "全新环境 status"; has "status 显示账号" "$OUT" "模式：Claude 账号"
@@ -334,6 +339,48 @@ touch "$SMOKE_PROC/claude_app"; cowork "$CA" fff 100 "fff"
 run claude desktop sync; ok "应用开着时 desktop sync"; has "说明了为什么跳过" "$ERR" "退出后才能同步"
 [ ! -e "$CB/local_fff.json" ] && pass || fail "应用开着时同步了 Cowork 会话"
 rm -f "$SMOKE_PROC/claude_app"
+
+# 桌面模型列表：问网关要一份，只留 Claude 模型，按系列和版本排序，带日期的别名不重复列
+MODELS_JSON='{"data":[
+ {"id":"gpt-6-astra","supported_endpoint_types":["openai"]},
+ {"id":"claude-haiku-4-5-20251001","supported_endpoint_types":["anthropic","openai"]},
+ {"id":"claude-opus-5","supported_endpoint_types":["anthropic"]},
+ {"id":"claude-sonnet-5"},
+ {"id":"claude-fable-5-1"},
+ {"id":"claude-haiku-4-5","supported_endpoint_types":["anthropic","openai"]},
+ {"id":"claude-opus-5-5","supported_endpoint_types":["anthropic"]},
+ {"id":"claude-image-only","supported_endpoint_types":["openai"]},
+ {"id":"auto"}]}'
+WANT="claude-opus-5-5,claude-opus-5,claude-sonnet-5,claude-haiku-4-5,claude-fable-5-1"
+SMOKE_BODY="$MODELS_JSON" CLAUDE_MODE_DRY_RUN=1 run claude desktop models
+ok "desktop models（只看不写）"
+has "排好序的 Claude 模型" "$OUT" "models=$WANT"
+has "没配过时按内置默认值比对" "$OUT" "current=claude-opus-5-5,claude-sonnet-5,claude-haiku-4-5,claude-fable-5-1"
+has "带上桌面应用当前走哪边" "$OUT" "desktop=account"
+hasnt "别家的模型没混进来" "$OUT" "gpt-6"
+hasnt "只支持 openai 接口的 Claude 模型不要" "$OUT" "claude-image-only"
+hasnt "带日期的别名不重复列" "$OUT" "claude-haiku-4-5-20251001"
+eq "只看不写时 conf 没动" "$(sed -n 's/^desktop_models=//p' "$CLAUDE_CONFIG_DIR/claude-mode.conf")" ""
+# 账号模式下更新：只写 conf，不重启应用
+SMOKE_BODY="$MODELS_JSON" run claude desktop models; ok "desktop models（账号模式）"
+eq "列表写进了 conf" "$(sed -n 's/^desktop_models=//p' "$CLAUDE_CONFIG_DIR/claude-mode.conf")" "$WANT"
+has "说明了什么时候生效" "$ERR" "下次切到网关模式"
+run claude status; has "status 里能看到默认模型" "$OUT" "桌面模型：默认 claude-opus-5-5，共 5 个"
+# 网关模式下更新：顺带重新应用，桌面应用的配置里跟着变
+run claude desktop gateway; ok "切到网关模式（准备下一步）"
+SMOKE_BODY="$MODELS_JSON" CLAUDE_MODE_MODELS="claude-opus-5-5, claude-sonnet-5 ," run claude desktop models
+ok "desktop models（指定列表）"
+eq "指定的列表写进了 conf" "$(sed -n 's/^desktop_models=//p' "$CLAUDE_CONFIG_DIR/claude-mode.conf")" "claude-opus-5-5,claude-sonnet-5"
+ENTRY="$LIB/$(json "$LIB/_meta.json" appliedId).json"
+eq "桌面应用的模型跟着更新了" "$(json "$ENTRY" inferenceModels.0)" "claude-opus-5-5"
+eq "桌面应用的模型个数" "$(json "$ENTRY" inferenceModels.1)" "claude-sonnet-5"
+run claude desktop-mode; eq "更新完还在网关模式" "$OUT" gateway
+CLAUDE_MODE_MODELS="claude-opus-5-5,坏 名字" run claude desktop models; fails "模型名不合法时"
+eq "不合法时 conf 没动" "$(sed -n 's/^desktop_models=//p' "$CLAUDE_CONFIG_DIR/claude-mode.conf")" "claude-opus-5-5,claude-sonnet-5"
+SMOKE_HTTP_CODE=500 run claude desktop models; fails "网关出错时"
+has "报错说清楚了" "$ERR" "HTTP 500"
+eq "网关出错时 conf 没动" "$(sed -n 's/^desktop_models=//p' "$CLAUDE_CONFIG_DIR/claude-mode.conf")" "claude-opus-5-5,claude-sonnet-5"
+run claude desktop account; ok "收尾：切回账号模式"
 
 echo
 if [ "$FAILED" -gt 0 ]; then echo "冒烟测试没有通过：$FAILED 项失败，$PASSED 项通过。" >&2; exit 1; fi
