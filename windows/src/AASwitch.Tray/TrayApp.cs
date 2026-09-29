@@ -57,7 +57,13 @@ sealed class TrayApp : ApplicationContext
         var secrets = new WindowsCredentialStore();
         var codexBin = CodexCli.Find(Settings.CodexBin);
         var codex = new CodexMode(paths, secrets, codexBin is null ? null : new CodexCli(codexBin, paths.CodexHome), say, CodexProcesses.Running);
-        return [new CodexProduct(codex, paths, secrets, codexBin is not null), new ClaudeProduct(new ClaudeMode(paths, secrets, say), paths, secrets)];
+        return [new CodexProduct(codex, paths, secrets, codexBin is not null), new ClaudeProduct(new ClaudeMode(paths, secrets, say), paths, secrets, NewDesktop(paths, say), say)];
+    }
+
+    static ClaudeDesktop NewDesktop(AppPaths paths, Action<string> say)
+    {
+        var dp = ClaudeDesktopPaths.FromEnvironment();
+        return new ClaudeDesktop(dp, paths, new WindowsDesktopApp(dp), say);
     }
 
     void Say(string s) { Log.Write("  " + s); lock (_said) _said.Add(s); }
@@ -302,7 +308,7 @@ sealed class TrayApp : ApplicationContext
 
         var more = new ToolStripMenuItem("更多");
         more.DropDownItems.Add(Item("配置 API 地址 / key…", () => OpenConfigure(p), !_busy));
-        if (view.CanReapply && !_busy) more.DropDownItems.Add(Item("重新应用 API 配置", () => EnsureConfiguredThenSwitch(p)));
+        if (view.CanReapply && !_busy) more.DropDownItems.Add(Item(p.DesktopMode() == "gateway" ? "重新应用 API 配置并重启 Claude 桌面应用" : "重新应用 API 配置", () => EnsureConfiguredThenSwitch(p)));
         more.DropDownItems.Add(Item("打开备份文件夹", () => { Directory.CreateDirectory(p.BackupsDir); Process.Start("explorer.exe", $"\"{p.BackupsDir}\""); }));
         if (view.Details.Count > 0 || !_status.ContainsKey(p.Name)) more.DropDownItems.Add(new ToolStripSeparator());
         if (!_status.ContainsKey(p.Name)) more.DropDownItems.Add(Item("正在读取状态…", null));
@@ -511,6 +517,20 @@ sealed class TrayApp : ApplicationContext
         if (codex.Path is null) foreach (var t in codex.Tried) r.AppendLine("  找过 " + t);
         if (Settings.CodexBin.Length > 0) r.AppendLine($"用户指定的 codex 位置：{Settings.CodexBin}");
         r.AppendLine($"正在运行的 Codex 进程：{string.Join("、", CodexProcesses.Running())}").AppendLine();
+        try
+        {
+            var dp = ClaudeDesktopPaths.FromEnvironment();
+            r.AppendLine("== Claude 桌面应用").AppendLine($"已安装：{dp.Installed}").AppendLine($"应用商店包：{dp.PackageDir ?? "（没有）"}");
+            r.AppendLine($"安装包版目录：{dp.InstallerDir}（{(Directory.Exists(dp.InstallerDir) ? "有" : "没有")}）");
+            r.AppendLine($"账号模式数据：{dp.AccountDir}（{(Directory.Exists(dp.AccountDir) ? "有" : "没有")}）");
+            r.AppendLine($"网关模式数据：{dp.GatewayDir}（{(Directory.Exists(dp.GatewayDir) ? "有" : "没有")}）");
+            var d = new ClaudeDesktop(dp, AppPaths.FromEnvironment(), new WindowsDesktopApp(dp), _ => { });
+            r.AppendLine($"模式：{d.ModeWord()}");
+            if (d.Installed) { var g = d.ReadGateway(); r.AppendLine($"deploymentMode={g.Deployment} provider={g.Provider} url={g.Url}"); }
+            foreach (var l in new WindowsDesktopApp(dp).Describe()) r.AppendLine("  进程 " + l);
+        }
+        catch (Exception e) { r.AppendLine("  读取失败：" + e.Message); }
+        r.AppendLine();
         r.AppendLine($"== 最近的日志（{Log.FilePath}）").AppendLine(Log.Tail(300));
         var file = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), $"{AppInfo.Name} 诊断 {DateTime.Now:yyyyMMdd-HHmmss}.txt");
         try { File.WriteAllText(file, r.ToString(), new UTF8Encoding(true)); Process.Start("explorer.exe", $"/select,\"{file}\""); }

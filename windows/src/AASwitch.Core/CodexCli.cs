@@ -107,7 +107,7 @@ public sealed class CodexCli(string executable, string codexHome) : ICodexCli
     }
 
     /// <summary>Windows 的用户目录：先看环境变量（测试里可以指到临时目录），没有再问系统。别的系统上只认环境变量。</summary>
-    static string? KnownFolder(string env, Environment.SpecialFolder folder)
+    internal static string? KnownFolder(string env, Environment.SpecialFolder folder)
     {
         var v = Environment.GetEnvironmentVariable(env);
         if (!string.IsNullOrWhiteSpace(v)) return v;

@@ -6,10 +6,18 @@ namespace AASwitch.Core;
 /// <summary>
 /// Claude Code（终端和 IDE 插件）在「Claude 账号」和「自定义 API」之间切换，对应 macOS 版的 claude-mode 脚本。
 /// 原理相同：settings.json 的 env 块里有 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 时新会话走网关，删掉就回到账号登录；
-/// settings.json 的其他内容原样保留，写之前先备份。桌面应用的第三方推理模式另见 ClaudeDesktop（待 Windows 路径确认后实现）。
+/// settings.json 的其他内容原样保留，写之前先备份。桌面应用的第三方推理模式另见 ClaudeDesktop。
 /// </summary>
-public sealed partial class ClaudeMode(AppPaths paths, ISecretStore secrets, Action<string> say, HttpMessageHandler? http = null)
+/// <param name="systemEnv">读 Windows 用户 / 系统级环境变量（注册表里那份），单测里换掉；默认读当前用户和本机两份。</param>
+public sealed partial class ClaudeMode(AppPaths paths, ISecretStore secrets, Action<string> say, HttpMessageHandler? http = null, Func<string, string?>? systemEnv = null)
 {
+    static readonly string[] GlobalEnvKeys = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
+    readonly Func<string, string?> _systemEnv = systemEnv ?? (name =>
+        Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User) ?? Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Machine));
+
+    /// <summary>设在 Windows 环境变量里的 ANTHROPIC_*：Claude Code 每次启动都会读到，切回账号也盖不掉。</summary>
+    public List<string> GlobalEnv() => [.. GlobalEnvKeys.Where(k => !string.IsNullOrEmpty(_systemEnv(k)))];
+
     public const string Version = "0.2.0";
     const int KeepBackups = 20;
     static readonly string[] EnvKeys = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CUSTOM_HEADERS"];
@@ -164,6 +172,9 @@ public sealed partial class ClaudeMode(AppPaths paths, ISecretStore secrets, Act
         lines.Add(AccountLoggedIn() ? (email.Length > 0 ? $"账号：已登录（{email}）" : "账号：已登录") : "账号：未登录");
         if (cfg.BaseUrl.Length > 0) lines.Add(HasKey(cfg.BaseUrl) ? "凭据管理器：已保存 key" : "凭据管理器：未保存 key");
         if (env.HasForeignApiKey) lines.Add("注意：settings.json 里另有 ANTHROPIC_API_KEY，会盖过账号登录");
+        var global = GlobalEnv();
+        if (global.Count > 0)
+            lines.Add($"注意：Windows 环境变量里设了 {string.Join("、", global)}，账号模式会被它盖掉；请在“编辑账户的环境变量”里删掉后重开终端");
         return lines;
     }
 
@@ -171,9 +182,21 @@ public sealed partial class ClaudeMode(AppPaths paths, ISecretStore secrets, Act
     void BackupSettings()
     {
         if (!File.Exists(paths.ClaudeSettings)) return;
+        var dir = NewBackupDir(paths);
+        File.Copy(paths.ClaudeSettings, Path.Combine(dir, "settings.json"), overwrite: true);
+        PruneBackups(paths);
+    }
+
+    /// <summary>这次操作的备份目录（claude-mode-backups\时间戳），和桌面应用的备份共用。</summary>
+    internal static string NewBackupDir(AppPaths paths)
+    {
         var dir = Path.Combine(paths.ClaudeBackups, DateTime.Now.ToString("yyyyMMdd-HHmmss"));
         Directory.CreateDirectory(dir);
-        File.Copy(paths.ClaudeSettings, Path.Combine(dir, "settings.json"), overwrite: true);
+        return dir;
+    }
+
+    internal static void PruneBackups(AppPaths paths)
+    {
         var old = Directory.GetDirectories(paths.ClaudeBackups)
             .Where(d => BackupDirName().IsMatch(Path.GetFileName(d)))
             .OrderByDescending(d => Path.GetFileName(d), StringComparer.Ordinal)

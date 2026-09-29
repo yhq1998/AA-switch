@@ -4,7 +4,7 @@ namespace AASwitch.Core.Tests;
 
 public sealed class TrayViewTests
 {
-    sealed class Fake(bool codex) : IProduct
+    sealed class Fake(bool codex, string desktop = "absent") : IProduct
     {
         public string Name => codex ? "Codex" : "Claude Code";
         public string AccountWord => codex ? "chatgpt" : "account";
@@ -18,6 +18,7 @@ public sealed class TrayViewTests
         public string Configure(string url, string headerPairs, string? key) => url;
         public Task SwitchToApiAsync() => Task.CompletedTask; public void SwitchToAccount() { }
         public string ModelsEndpoint(string url) => url;
+        public string DesktopMode() => desktop;
     }
     static readonly IProduct Codex = new Fake(true), Claude = new Fake(false);
 
@@ -105,4 +106,37 @@ public sealed class TrayViewTests
         Assert.Contains("网关返回：额度已用完。", r.Message);
         Assert.DoesNotContain("网关返回", TrayView.ClassifyProbe(401, "https://x/v1/models", "https://x").Message);
     }
+
+    // ---------- Claude 桌面应用 ----------
+    [Fact]
+    public void Desktop_in_step_with_cli_is_selected_and_noted()
+    {
+        var s = TrayView.Build(new Fake(false, "gateway"), "api", ["请求发往：https://gw.example.com"], "AA Switch");
+        Assert.Equal(1, s.Selected);
+        Assert.Empty(s.Warnings);
+        Assert.Contains("切换会重启 Claude 桌面应用，会话列表自动同步", s.Notes);
+        Assert.Equal(0, TrayView.Build(new Fake(false, "account"), "account", [], "AA Switch").Selected);
+    }
+
+    [Theory]
+    [InlineData("api", "account", "⚠ 命令行在API、桌面应用在账号，点 API 会把两边都切到 API")]
+    [InlineData("account", "gateway", "⚠ 命令行在账号、桌面应用在网关，点 API 会把两边都切到 API")]
+    public void Desktop_out_of_step_warns_and_selects_nothing(string cli, string desktop, string warning)
+    {
+        var s = TrayView.Build(new Fake(false, desktop), cli, [], "AA Switch");
+        Assert.Null(s.Selected);
+        Assert.Contains(warning, s.Warnings);
+    }
+
+    [Theory]
+    [InlineData("api", "gateway", true, false)]
+    [InlineData("api", "account", true, true)]
+    [InlineData("account", "gateway", true, true)]
+    [InlineData("account", "account", false, false)]
+    [InlineData("account", "gateway", false, true)]
+    [InlineData("api", "account", false, true)]
+    [InlineData("account", "absent", false, false)]
+    [InlineData("api", "absent", true, false)]
+    public void Needs_switch_looks_at_desktop_too(string cli, string desktop, bool wantApi, bool expected) =>
+        Assert.Equal(expected, TrayView.NeedsSwitch(new Fake(false, desktop), cli, [], wantApi));
 }

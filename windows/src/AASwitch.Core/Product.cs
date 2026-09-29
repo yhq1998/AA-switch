@@ -23,9 +23,12 @@ public interface IProduct
     void SwitchToAccount();
     /// <summary>探测 key 用的 models 接口地址。</summary>
     string ModelsEndpoint(string url);
+    /// <summary>Claude 桌面应用的模式：gateway / account / absent（没装，或者不是 Claude）。</summary>
+    string DesktopMode() => "absent";
 }
 
-public sealed class ClaudeProduct(ClaudeMode mode, AppPaths paths, ISecretStore secrets) : IProduct
+/// <summary>Claude Code 加上 Claude 桌面应用（desktop 为 null 表示不管桌面应用）：点 API 两边都切到网关，点账号两边都切回账号，和 macOS 版一样。</summary>
+public sealed class ClaudeProduct(ClaudeMode mode, AppPaths paths, ISecretStore secrets, ClaudeDesktop? desktop = null, Action<string>? say = null) : IProduct
 {
     public string Name => "Claude Code";
     public string AccountWord => "account";
@@ -35,13 +38,44 @@ public sealed class ClaudeProduct(ClaudeMode mode, AppPaths paths, ISecretStore 
     public bool IsCodex => false;
     public string BackupsDir => paths.ClaudeBackups;
     public string DataDir => paths.ClaudeHome;
-    public string ModeWord() => mode.ModeWord();
-    public List<string> Status() => mode.Status();
+    public ClaudeDesktop? Desktop => desktop is { Installed: true } ? desktop : null;
+    public string DesktopMode() => Desktop?.ModeWord() ?? "absent";
+    // 只装了桌面应用、没装命令行也照样管：模式看 settings.json
+    public string ModeWord()
+    {
+        var m = mode.ModeWord();
+        return m == "absent" && Desktop is not null ? (mode.ReadEnv().BaseUrl.Length > 0 ? "api" : "account") : m;
+    }
+    public List<string> Status()
+    {
+        var lines = mode.Status();
+        if (Desktop is { } d) lines.AddRange(d.Status());
+        return lines;
+    }
     public (string, string) LoadConfig() { var c = mode.LoadConfig(); return (c.BaseUrl, c.Headers); }
     public string FindKey(string url) => secrets.Get(Gateway.SecretName(url)) ?? "";
     public string Configure(string url, string headerPairs, string? key) => mode.Configure(url, headerPairs, key);
-    public Task SwitchToApiAsync() => mode.SwitchToApiAsync();
-    public void SwitchToAccount() => mode.SwitchToAccount();
+    /// <summary>命令行总是重写一遍；桌面应用不在网关模式就切过去，已经在网关模式、命令行也已经是 API（即“重新应用”）时也重写并重启，
+    /// 命令行在账号、桌面应用已在网关（不一致）时只切命令行，免得白白重启应用。</summary>
+    public async Task SwitchToApiAsync()
+    {
+        var wasApi = mode.ReadEnv().BaseUrl.Length > 0;
+        await mode.SwitchToApiAsync();
+        if (Desktop is not { } d) return;
+        if (d.ModeWord() == "gateway" && !wasApi) return;
+        var url = mode.LoadConfig().BaseUrl;
+        d.SwitchToGateway(url, FindKey(url));
+        var gw = d.GatewayUrl(url);
+        say?.Invoke(gw == url.TrimEnd('/') ? $"已切到 API 模式：终端、IDE 插件和 {ClaudeDesktop.AppName}都走 {url}。"
+                                           : $"已切到 API 模式：终端和 IDE 插件走 {url}，{ClaudeDesktop.AppName}走 {gw}。");
+    }
+    public void SwitchToAccount()
+    {
+        mode.SwitchToAccount();
+        if (Desktop is not { } d || d.ModeWord() != "gateway") return;
+        d.SwitchToAccount();
+        say?.Invoke($"已切回 Claude 账号模式：终端、IDE 插件和 {ClaudeDesktop.AppName}都用账号登录。");
+    }
     public string ModelsEndpoint(string url) => url.TrimEnd('/') + "/v1/models";
 }
 

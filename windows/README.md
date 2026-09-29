@@ -21,7 +21,15 @@ key 的条目名 `codex-mode:域名`（存在 Windows 凭据管理器的“普�
 - [x] Codex 切换：`aaswitch codex api|chatgpt|fix-threads|status|…`（config.toml 的 provider 别名、会话和 state_*.sqlite 的 provider 统一、
       ChatGPT 登录态存档与恢复、失败回滚）。与 macOS 的 codex-mode.sh 用同一份数据做过对照，产出一致。切换前要自己关掉 Codex 应用和 codex 进程，
       自动退出 / 重开应用放在下一步
-- [ ] Claude 桌面应用的第三方推理模式、会话列表同步（等 probe 结果确认路径）
+- [x] Claude 桌面应用（Code、Cowork 标签）跟着 Claude Code 一起切：API ↔ 网关模式（第三方推理），账号 ↔ 账号模式，对应 macOS 的 `claude-mode desktop`。
+      改的是 `%LOCALAPPDATA%\Claude-3p\claude_desktop_config.json` 的 `deploymentMode`（`1p` / `3p`），网关地址、key、模型写进同目录
+      `configLibrary\<appliedId>.json`（用户在应用里建过就沿用那份，没有就新建一份叫 “AA Switch” 的）；`claude-mode.conf` 的 `desktop_base_url` /
+      `desktop_models` 可以单独指定。账号模式的数据在应用商店版的 `%LOCALAPPDATA%\Packages\Claude_…\LocalCache\Roaming\Claude`
+      （安装包版是 `%APPDATA%\Claude`），两边的 Code 会话列表互相补齐、Cowork 会话按 `~\.claude\claude-mode-cowork-sync` 的记录双向同步，
+      复制时把会话里的绝对路径改成应用眼里的新位置（应用商店版有重定向）。顺序：备份到 `claude-mode-backups\<时间>\desktop` → 退出应用（按程序位置认进程，
+      命令行的 claude.exe 不动；关窗口等 3 秒，不行就结束进程树）→ 改配置 → 同步 → 重新打开；原来没开着就下次打开生效。
+      命令行 `aaswitch claude desktop gateway|account|sync|mode`。命令行和桌面应用不在同一边时菜单两段都不选中并给出提示；
+      Windows 环境变量里设了 `ANTHROPIC_*` 时状态里提醒（它会盖过账号模式）。安装包版的 `-3p` 目录位置没在真机上见过，按“已有的优先，否则 %LOCALAPPDATA%”处理
 - [x] 托盘程序 `AA Switch.exe`（`src/AASwitch.Tray`，WinForms）：每个产品一行“账号 | API”分段控件、配置表单（规范化地址，用 key 探测网关：401/403 拦下，
       连不上或 404 可坚持保存）、初始设置、开机自启（HKCU 的 Run 项）、导出诊断信息、单实例。菜单该显示什么由 Core 的 `TrayView` 决定，有单元测试。
       还没有的：切换前已打开的终端会话提醒、深色菜单

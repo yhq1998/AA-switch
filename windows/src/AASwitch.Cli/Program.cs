@@ -46,6 +46,7 @@ string AskSecret(string prompt)
 int Usage()
 {
     Say("用法：aaswitch claude api|account|status|configure|set-key|forget-key|mode|config|has-key URL");
+    Say("      aaswitch claude desktop gateway|account|sync|mode   （Claude 桌面应用；api / account 只管终端和 IDE 插件）");
     Say("      aaswitch codex  api|chatgpt|fix-threads|status|configure|set-key|forget-key|mode|config|has-key URL");
     Say("      aaswitch version");
     return 1;
@@ -117,6 +118,25 @@ try
             if (claude is not null) await claude.SwitchToApiAsync(); else await codex!.SwitchToApiAsync();
             return 0;
         case "account" when claude is not null: claude.SwitchToAccount(); return 0;
+        case "desktop" when claude is not null:
+        {
+            var dp = ClaudeDesktopPaths.FromEnvironment();
+            var desktop = new ClaudeDesktop(dp, paths, new WindowsDesktopApp(dp), Say);
+            switch (args.Length > 2 ? args[2] : "")
+            {
+                case "mode": Console.WriteLine(desktop.ModeWord()); return 0;
+                case "account": desktop.SwitchToAccount(); return 0;
+                case "sync": desktop.SyncOnly(); return 0;
+                case "gateway":
+                    var cfg = claude.LoadConfig();
+                    if (cfg.BaseUrl.Length == 0) throw new SwitchException("还没有配置 API 地址，请先运行 aaswitch claude configure。");
+                    var k = secrets.Get(Gateway.SecretName(cfg.BaseUrl));
+                    if (string.IsNullOrEmpty(k)) throw new SwitchException($"还没有保存 {Gateway.UrlHost(cfg.BaseUrl)} 的 API key，请先运行 aaswitch claude set-key。");
+                    desktop.SwitchToGateway(cfg.BaseUrl, k);
+                    return 0;
+                default: return Usage();
+            }
+        }
         case "chatgpt" when codex is not null: codex.SwitchToChatGpt(); return 0;
         case "fix-threads" when codex is not null: codex.FixThreads(); return 0;
         case "status": foreach (var line in status()) Console.WriteLine(line); return 0;

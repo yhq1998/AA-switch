@@ -47,6 +47,10 @@ public static class TrayView
         return (mode == "api" && login.Length > 0 && !login.StartsWith("API key") && !login.StartsWith("未知")) || (mode == "chatgpt" && login.StartsWith("API key"));
     }
 
+    /// <summary>Claude Code 命令行和桌面应用不在同一种模式。</summary>
+    static bool DesktopMixed(string mode, string desktop) =>
+        desktop != "absent" && mode is "api" or "account" && (mode == "api") != (desktop == "gateway");
+
     public static string ShortUrl(string url)
     {
         foreach (var prefix in new[] { "https://", "http://" }) if (url.StartsWith(prefix)) url = url[prefix.Length..];
@@ -62,7 +66,9 @@ public static class TrayView
         var info = Parse(statusLines ?? []);
         var url = ConfiguredUrl(info);
         var mixed = IsMixed(p, mode, info);
-        int? selected = mode == "api" ? 1 : mode == p.AccountWord ? 0 : null;
+        var desktop = p.DesktopMode();
+        var desktopMixed = DesktopMixed(mode, desktop);
+        int? selected = desktopMixed ? null : mode == "api" ? 1 : mode == p.AccountWord ? 0 : null;
 
         string urlLine; var opensConfigure = false;
         if (!loaded) urlLine = "读取中…";
@@ -72,11 +78,14 @@ public static class TrayView
         var notes = new List<string>();
         if (mode == "none") notes.Add($"还没用 {appName} 切换过，当前按 Codex 自己的设置运行；点一格开始管理");
         if (p.IsCodex) notes.Add("切换前请先关掉 Codex（应用、命令行和 IDE 里的会话）");
+        if (desktop != "absent") notes.Add("切换会重启 Claude 桌面应用，会话列表自动同步");
 
         var warnings = new List<string>();
         if (mixed)
             warnings.Add(mode == "api" ? "⚠ 配置指向 API 网关，但 Codex 用 ChatGPT 账号登录，请求会失败；再点一次当前模式即可修正"
                                        : "⚠ 配置是 ChatGPT 账号模式，但 Codex 用 API key 登录；再点一次当前模式即可修正");
+        if (desktopMixed)
+            warnings.Add($"⚠ 命令行在{(mode == "api" ? "API" : "账号")}、桌面应用在{(desktop == "gateway" ? "网关" : "账号")}，点 API 会把两边都切到 API");
         warnings.AddRange(info.Where(IsWarning).Select(l => "⚠ " + l));
 
         var details = info.Where(l => !IsWarning(l) && l.Key != "模式" && !UrlKeys.Contains(l.Key)).Select(l => l.ToString()).ToList();
@@ -131,7 +140,11 @@ public static class TrayView
     // ---------- 初始设置 ----------
     public static string DetectedText(IProduct p, string mode, List<Line> info)
     {
-        if (!p.IsCodex) return mode switch { "api" => "API 模式", "account" => "账号模式", _ => "状态未知" };
+        if (!p.IsCodex)
+        {
+            var cli = mode switch { "api" => "API 模式", "account" => "账号模式", _ => "状态未知" };
+            return p.DesktopMode() switch { "gateway" => cli + "，桌面应用：网关模式", "account" => cli + "，桌面应用：账号模式", _ => cli };
+        }
         var login = LoginWord(info);
         var tail = login.Length == 0 ? "" : $"，登录方式：{login}";
         return mode switch
@@ -147,7 +160,8 @@ public static class TrayView
     public static bool NeedsSwitch(IProduct p, string mode, List<Line> info, bool wantApi)
     {
         var mixed = IsMixed(p, mode, info);
-        if (wantApi) return !(mode == "api" && !mixed);
-        return p.IsCodex ? !((mode is "chatgpt" or "none") && !mixed) : mode != "account";
+        var desktop = p.DesktopMode();
+        if (wantApi) return !(mode == "api" && !mixed && desktop != "account");
+        return p.IsCodex ? !((mode is "chatgpt" or "none") && !mixed) : !(mode == "account" && desktop != "gateway");
     }
 }
