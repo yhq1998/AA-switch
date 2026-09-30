@@ -160,10 +160,13 @@ public sealed class ClaudeDesktop(ClaudeDesktopPaths dp, AppPaths paths, IDeskto
         g["inferenceGatewayBaseUrl"] = url;
         g["inferenceGatewayApiKey"] = key;
         g["inferenceGatewayAuthScheme"] = "bearer";
-        g["inferenceModels"] = new JsonArray([.. models.Select(m => (JsonNode)m)]);
+        // 名字后面加 [1m]：桌面应用把模型名原样交给 Claude Code，带 [1m] 才按 1M 上下文算（和命令行的默认一样）
+        g["inferenceModels"] = new JsonArray([.. models.Select(m => (JsonNode)With1M(m))]);
         JsonFile.Write(file, g);
         JsonFile.Write(Meta, meta);
     }
+
+    public static string With1M(string model) => model.EndsWith("[1m]", StringComparison.OrdinalIgnoreCase) ? model : model + "[1m]";
 
     /// <summary>appliedId 要拿来拼文件名：只认 uuid 这类字符，防止指到目录外面。</summary>
     static bool SafeId(string id) => Regex.IsMatch(id, "^[0-9A-Za-z-]{1,64}$");

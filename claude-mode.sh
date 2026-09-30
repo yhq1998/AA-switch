@@ -25,7 +25,8 @@
 #
 # 原理：Claude Code 的凭据优先级里，环境变量 ANTHROPIC_AUTH_TOKEN 排在账号登录之前；settings.json 的 env 块会被
 #   终端和 IDE 里的每个新会话读取。所以切到 API 只需写入 ANTHROPIC_BASE_URL 和
-#   ANTHROPIC_AUTH_TOKEN（有额外请求头时再写 ANTHROPIC_CUSTOM_HEADERS），切回账号只需删掉它们。settings.json
+#   ANTHROPIC_AUTH_TOKEN（有额外请求头时再写 ANTHROPIC_CUSTOM_HEADERS），切回账号只需删掉它们。切 API 时还写
+#   ANTHROPIC_MODEL=opus[1m]（或 settings.json 里 model 的值加 [1m]），默认用 1M 上下文，切回账号一并删掉。settings.json
 #   里的其他内容（hooks、权限、主题等）原样保留。
 # 依赖：macOS 自带的 bash、osascript（用 JavaScript 读写 JSON）、security、curl，不需要 Python。
 # 配置：~/.claude/claude-mode.conf 保存地址和请求头；key 只存在 macOS 钥匙串（条目名 codex-mode:域名，与 codex-mode
@@ -43,7 +44,7 @@
 #   （直接给定列表，不问网关，供图形界面把用户确认过的列表写回来）、CLAUDE_MODE_DRY_RUN=1（只打印 models= / current= /
 #   desktop=，什么都不写，供图形界面先弹确认框）。
 set -eu
-CLAUDE_MODE_VERSION="1.4.0"
+CLAUDE_MODE_VERSION="1.4.1"
 
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS="$CLAUDE_HOME/settings.json"
@@ -128,14 +129,22 @@ function run(argv) {
   const env = (obj.env && typeof obj.env === 'object') ? obj.env : {};
   if (op === 'get') {   // 逐行 key=value，方便 shell 用 sed 取值
     return 'base_url=' + (env.ANTHROPIC_BASE_URL || '') + '\nhas_token=' + (env.ANTHROPIC_AUTH_TOKEN ? 'true' : 'false')
-         + '\napi_key=' + (env.ANTHROPIC_API_KEY ? 'true' : 'false');
+         + '\napi_key=' + (env.ANTHROPIC_API_KEY ? 'true' : 'false') + '\nmodel=' + (env.ANTHROPIC_MODEL || '');
   }
   if (op === 'set') {
     obj.env = env;
     env.ANTHROPIC_BASE_URL = url; env.ANTHROPIC_AUTH_TOKEN = token;
     if (headers) env.ANTHROPIC_CUSTOM_HEADERS = headers; else delete env.ANTHROPIC_CUSTOM_HEADERS;
+    // 默认用 1M 上下文：模型名带 [1m] 后缀 Claude Code 就按 1M 窗口算并带上 1M 的 beta 头（不管网关支不支持）。
+    // 用户在 settings.json 里设了 model 就在它后面加 [1m]，没设用 opus[1m]；用户自己写的 ANTHROPIC_MODEL（不带 [1m]）不动
+    const m = env.ANTHROPIC_MODEL;
+    if (!m || /\[1m\]$/i.test(m)) {
+      const base = (typeof obj.model === 'string' && obj.model.trim()) ? obj.model.trim() : 'opus';
+      env.ANTHROPIC_MODEL = /\[1m\]$/i.test(base) ? base : base + '[1m]';
+    }
   } else if (op === 'clear') {
     for (const k of ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_CUSTOM_HEADERS']) delete env[k];
+    if (/\[1m\]$/i.test(env.ANTHROPIC_MODEL || '')) delete env.ANTHROPIC_MODEL;   // 切 API 时写的 1M 默认模型
     if (Object.keys(env).length === 0) delete obj.env; else obj.env = env;
   } else { throw new Error('未知操作 ' + op); }
   const out = $.NSString.alloc.initWithUTF8String(JSON.stringify(obj, null, 2) + '\n');
@@ -271,7 +280,8 @@ function run(argv) {
     g.inferenceGatewayBaseUrl = a;
     g.inferenceGatewayApiKey = b;
     g.inferenceGatewayAuthScheme = 'bearer';
-    g.inferenceModels = c.split(',').map(x => x.trim()).filter(x => x);
+    // 名字后面加 [1m]：桌面应用把模型名原样交给 Claude Code，带 [1m] 才按 1M 上下文算（和命令行的默认一样，不管网关支不支持）
+    g.inferenceModels = c.split(',').map(x => x.trim()).filter(x => x).map(x => /\[1m\]$/i.test(x) ? x : x + '[1m]');
     writeJSON(file, g); writeJSON(meta, m);
     return id;
   }
@@ -525,7 +535,7 @@ clean_models() {  # 去掉空格和空项，校验字符；不合法就报错。
   for item in "${pieces[@]+"${pieces[@]}"}"; do
     item="${item#"${item%%[![:space:]]*}"}"; item="${item%"${item##*[![:space:]]}"}"
     [ -n "$item" ] || continue
-    case "$item" in *[!A-Za-z0-9._-]*) die "模型名里有不该有的字符：${item}" ;; esac
+    case "${item%\[1m\]}" in ""|*[!A-Za-z0-9._-]*) die "模型名里有不该有的字符：${item}" ;; esac  # 结尾可以带 [1m]
     out="${out:+$out,}$item"
   done
   printf '%s' "$out"
@@ -648,6 +658,7 @@ mode_status() {
   if [ -n "$active" ]; then
     echo "模式：API（终端和 IDE 插件）"
     echo "请求发往：${active}"
+    if [ -n "$(env_field "$ENVJSON" model)" ]; then echo "默认模型：$(env_field "$ENVJSON" model)"; fi
     case "$(desktop_mode)" in
       gateway) echo "桌面应用：网关模式" ;;
       account) echo "桌面应用：账号模式（Code 标签不走上面的 API，见 desktop 命令）" ;;

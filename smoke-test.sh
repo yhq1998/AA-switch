@@ -261,13 +261,15 @@ run claude api; ok "第一次切到 API（还没有 settings.json）"
 eq "写了网关地址" "$(json "$SETTINGS" env.ANTHROPIC_BASE_URL)" "$GW"
 eq "写了 key" "$(json "$SETTINGS" env.ANTHROPIC_AUTH_TOKEN)" "$KEY"
 eq "写了请求头" "$(json "$SETTINGS" env.ANTHROPIC_CUSTOM_HEADERS)" "x-smoke: 1"
+eq "默认 1M 上下文" "$(json "$SETTINGS" env.ANTHROPIC_MODEL)" "opus[1m]"
 run claude mode; eq "切完是 api" "$OUT" api
 run claude status; ok "API 模式 status"; has "status 显示 API" "$OUT" "模式：API"
 run claude account; ok "切回账号"
 run claude mode; eq "切完是 account" "$OUT" account
 
-printf '{ "theme": "dark", "env": { "FOO": "1" }, "permissions": { "allow": ["Bash(ls:*)"] } }\n' > "$SETTINGS"   # 用户自己的设置
+printf '{ "theme": "dark", "model": "sonnet", "env": { "FOO": "1" }, "permissions": { "allow": ["Bash(ls:*)"] } }\n' > "$SETTINGS"   # 用户自己的设置
 run claude api; ok "已有 settings.json 时切到 API"
+eq "用户设的 model 加上 [1m]" "$(json "$SETTINGS" env.ANTHROPIC_MODEL)" "sonnet[1m]"
 eq "用户的 theme 还在" "$(json "$SETTINGS" theme)" dark
 eq "用户的 env.FOO 还在" "$(json "$SETTINGS" env.FOO)" 1
 eq "用户的 permissions 还在" "$(json "$SETTINGS" permissions.allow.0)" "Bash(ls:*)"
@@ -275,6 +277,7 @@ eq "用户的 permissions 还在" "$(json "$SETTINGS" permissions.allow.0)" "Bas
 run claude account; ok "再切回账号"
 eq "网关地址删掉了" "$(json "$SETTINGS" env.ANTHROPIC_BASE_URL)" ""
 eq "key 删掉了" "$(json "$SETTINGS" env.ANTHROPIC_AUTH_TOKEN)" ""
+eq "1M 默认模型删掉了" "$(json "$SETTINGS" env.ANTHROPIC_MODEL)" ""
 eq "用户的 env.FOO 还在（切回后）" "$(json "$SETTINGS" env.FOO)" 1
 eq "用户的 theme 还在（切回后）" "$(json "$SETTINGS" theme)" dark
 
@@ -374,8 +377,8 @@ SMOKE_BODY="$MODELS_JSON" CLAUDE_MODE_MODELS="claude-opus-5-5, claude-sonnet-5 ,
 ok "desktop models（指定列表）"
 eq "指定的列表写进了 conf" "$(sed -n 's/^desktop_models=//p' "$CLAUDE_CONFIG_DIR/claude-mode.conf")" "claude-opus-5-5,claude-sonnet-5"
 ENTRY="$LIB/$(json "$LIB/_meta.json" appliedId).json"
-eq "桌面应用的模型跟着更新了" "$(json "$ENTRY" inferenceModels.0)" "claude-opus-5-5"
-eq "桌面应用的模型个数" "$(json "$ENTRY" inferenceModels.1)" "claude-sonnet-5"
+eq "桌面应用的模型跟着更新了" "$(json "$ENTRY" inferenceModels.0)" "claude-opus-5-5[1m]"
+eq "桌面应用的模型个数" "$(json "$ENTRY" inferenceModels.1)" "claude-sonnet-5[1m]"
 run claude desktop-mode; eq "更新完还在网关模式" "$OUT" gateway
 CLAUDE_MODE_MODELS="claude-opus-5-5,坏 名字" run claude desktop models; fails "模型名不合法时"
 eq "不合法时 conf 没动" "$(sed -n 's/^desktop_models=//p' "$CLAUDE_CONFIG_DIR/claude-mode.conf")" "claude-opus-5-5,claude-sonnet-5"

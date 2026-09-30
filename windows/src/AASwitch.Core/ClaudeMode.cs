@@ -18,13 +18,15 @@ public sealed partial class ClaudeMode(AppPaths paths, ISecretStore secrets, Act
     /// <summary>设在 Windows 环境变量里的 ANTHROPIC_*：Claude Code 每次启动都会读到，切回账号也盖不掉。</summary>
     public List<string> GlobalEnv() => [.. GlobalEnvKeys.Where(k => !string.IsNullOrEmpty(_systemEnv(k)))];
 
-    public const string Version = "0.2.0";
+    public const string Version = "0.2.1";
     const int KeepBackups = 20;
     static readonly string[] EnvKeys = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CUSTOM_HEADERS"];
 
     readonly ConfFile _conf = new(paths.ClaudeConf);
 
-    public sealed record EnvState(string BaseUrl, bool HasToken, bool HasForeignApiKey);
+    public sealed record EnvState(string BaseUrl, bool HasToken, bool HasForeignApiKey, string Model = "");
+
+    static bool Is1M(string model) => model.EndsWith("[1m]", StringComparison.OrdinalIgnoreCase);
     public sealed record Config(string BaseUrl, string Headers);
 
     // ---------- 读状态 ----------
@@ -34,7 +36,8 @@ public sealed partial class ClaudeMode(AppPaths paths, ISecretStore secrets, Act
         return new EnvState(
             JsonFile.String(env?["ANTHROPIC_BASE_URL"]) ?? "",
             !string.IsNullOrEmpty(JsonFile.String(env?["ANTHROPIC_AUTH_TOKEN"])),
-            !string.IsNullOrEmpty(JsonFile.String(env?["ANTHROPIC_API_KEY"])));
+            !string.IsNullOrEmpty(JsonFile.String(env?["ANTHROPIC_API_KEY"])),
+            JsonFile.String(env?["ANTHROPIC_MODEL"]) ?? "");
     }
 
     /// <summary>api / account / absent，给托盘菜单用。</summary>
@@ -127,6 +130,15 @@ public sealed partial class ClaudeMode(AppPaths paths, ISecretStore secrets, Act
         env["ANTHROPIC_AUTH_TOKEN"] = key;
         var lines = Gateway.HeaderLines(cfg.Headers);
         if (lines.Length > 0) env["ANTHROPIC_CUSTOM_HEADERS"] = lines; else env.Remove("ANTHROPIC_CUSTOM_HEADERS");
+        // 默认用 1M 上下文：模型名带 [1m] 后缀 Claude Code 就按 1M 窗口算并带上 1M 的 beta 头（不管网关支不支持）。
+        // 用户在 settings.json 里设了 model 就在它后面加 [1m]，没设用 opus[1m]；用户自己写的 ANTHROPIC_MODEL（不带 [1m]）不动
+        var model = JsonFile.String(env["ANTHROPIC_MODEL"]) ?? "";
+        if (model.Length == 0 || Is1M(model))
+        {
+            var basis = (JsonFile.String(obj["model"]) ?? "").Trim();
+            if (basis.Length == 0) basis = "opus";
+            env["ANTHROPIC_MODEL"] = Is1M(basis) ? basis : basis + "[1m]";
+        }
         JsonFile.Write(paths.ClaudeSettings, obj);
 
         say($"已切到 API 模式（{cfg.BaseUrl}）。终端和 IDE 插件里新开的 Claude Code 会话立即生效。");
@@ -141,6 +153,7 @@ public sealed partial class ClaudeMode(AppPaths paths, ISecretStore secrets, Act
         if (obj["env"] is JsonObject env)
         {
             foreach (var k in EnvKeys) env.Remove(k);
+            if (Is1M(JsonFile.String(env["ANTHROPIC_MODEL"]) ?? "")) env.Remove("ANTHROPIC_MODEL");   // 切 API 时写的 1M 默认模型
             if (env.Count == 0) obj.Remove("env");
         }
         if (File.Exists(paths.ClaudeSettings) || obj.Count > 0) JsonFile.Write(paths.ClaudeSettings, obj);
@@ -160,6 +173,7 @@ public sealed partial class ClaudeMode(AppPaths paths, ISecretStore secrets, Act
         {
             lines.Add("模式：API（终端和 IDE 插件）");
             lines.Add($"请求发往：{env.BaseUrl}");
+            if (env.Model.Length > 0) lines.Add($"默认模型：{env.Model}");
             if (cfg.BaseUrl.Length > 0 && cfg.BaseUrl.TrimEnd('/') != env.BaseUrl.TrimEnd('/'))
                 lines.Add($"新地址尚未生效：{cfg.BaseUrl}（重新切换到 API 后生效）");
         }

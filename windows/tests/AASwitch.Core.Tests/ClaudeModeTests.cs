@@ -45,6 +45,7 @@ public sealed class ClaudeModeTests : IDisposable
         Assert.Equal("sk-test", (string)env["ANTHROPIC_AUTH_TOKEN"]!);
         Assert.Equal("x-a: b\nx-c: d", (string)env["ANTHROPIC_CUSTOM_HEADERS"]!);
         Assert.Equal("1", (string)env["FOO"]!);
+        Assert.Equal("opus[1m]", (string)env["ANTHROPIC_MODEL"]!);
         Assert.Equal("https://gw.example.com/v1/models", _http.Last!.RequestUri!.ToString());
         Assert.Equal("Bearer sk-test", _http.Last.Headers.Authorization!.ToString());
         Assert.Equal("b", _http.Last.Headers.GetValues("x-a").Single());
@@ -70,6 +71,24 @@ public sealed class ClaudeModeTests : IDisposable
         Assert.Null(((JsonObject)Settings()["env"]!)["ANTHROPIC_CUSTOM_HEADERS"]);
         c.SwitchToAccount();
         Assert.Null(Settings()["env"]);
+    }
+
+    [Fact]
+    public async Task Api_defaults_to_1m_on_top_of_users_model_and_leaves_own_model_alone()
+    {
+        WriteSettings("""{ "model": "sonnet" }""");
+        var c = New();
+        c.Configure("https://gw.example.com", "", "k");
+        await c.SwitchToApiAsync();
+        Assert.Equal("sonnet[1m]", (string)((JsonObject)Settings()["env"]!)["ANTHROPIC_MODEL"]!);
+        c.SwitchToAccount();
+        Assert.Null(Settings()["env"]);
+
+        WriteSettings("""{ "env": { "ANTHROPIC_MODEL": "claude-haiku-4-5" } }""");
+        await c.SwitchToApiAsync();
+        Assert.Equal("claude-haiku-4-5", (string)((JsonObject)Settings()["env"]!)["ANTHROPIC_MODEL"]!);
+        c.SwitchToAccount();
+        Assert.Equal("claude-haiku-4-5", (string)((JsonObject)Settings()["env"]!)["ANTHROPIC_MODEL"]!);
     }
 
     [Theory]
