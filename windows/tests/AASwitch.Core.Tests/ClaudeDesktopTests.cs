@@ -94,6 +94,7 @@ public sealed class ClaudeDesktopTests : IDisposable
         Assert.Equal("https://gw.example.com", (string)g["inferenceGatewayBaseUrl"]!);
         Assert.Equal("sk-1", (string)g["inferenceGatewayApiKey"]!);
         Assert.Equal("bearer", (string)g["inferenceGatewayAuthScheme"]!);
+        Assert.Equal(["*"], g["coworkEgressAllowedHosts"]!.AsArray().Select(x => (string)x!).ToArray());
         Assert.Equal(ClaudeDesktop.DefaultModels.Split(',').Select(m => m + "[1m]"), g["inferenceModels"]!.AsArray().Select(x => (string)x!).ToArray());
         Assert.Equal(["桌面应用：网关模式（https://gw.example.com）", "桌面模型：默认 claude-opus-5-5，共 4 个"], d.Status());
 
@@ -110,7 +111,7 @@ public sealed class ClaudeDesktopTests : IDisposable
     {
         var lib = Path.Combine(Gateway3p, "configLibrary");
         Write(Path.Combine(lib, "_meta.json"), """{ "appliedId": "abc-1", "entries": [ { "id": "abc-1", "name": "Mine" } ] }""");
-        Write(Path.Combine(lib, "abc-1.json"), """{ "inferenceProvider": "bedrock", "inferenceCredentialKind": "static" }""");
+        Write(Path.Combine(lib, "abc-1.json"), """{ "inferenceProvider": "bedrock", "inferenceCredentialKind": "static", "coworkEgressAllowedHosts": ["gw.example.com"] }""");
         File.WriteAllText(_paths.ClaudeConf, "desktop_base_url=https://desk.example.com\ndesktop_models=m1, m2[1m]\n");
         var d = New();
         d.SwitchToGateway("https://gw.example.com", "sk-2");
@@ -120,6 +121,7 @@ public sealed class ClaudeDesktopTests : IDisposable
         Assert.Equal("gateway", (string)g["inferenceProvider"]!);
         Assert.Equal("static", (string)g["inferenceCredentialKind"]!);
         Assert.Equal("https://desk.example.com", (string)g["inferenceGatewayBaseUrl"]!);
+        Assert.Equal(["*"], g["coworkEgressAllowedHosts"]!.AsArray().Select(x => (string)x!).ToArray());
         Assert.Equal(["m1[1m]", "m2[1m]"], g["inferenceModels"]!.AsArray().Select(x => (string)x!).ToArray());
         Assert.Single(Read(Path.Combine(lib, "_meta.json"))["entries"]!.AsArray());
     }

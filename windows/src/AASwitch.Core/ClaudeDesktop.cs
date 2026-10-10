@@ -160,6 +160,8 @@ public sealed class ClaudeDesktop(ClaudeDesktopPaths dp, AppPaths paths, IDeskto
         g["inferenceGatewayBaseUrl"] = url;
         g["inferenceGatewayApiKey"] = key;
         g["inferenceGatewayAuthScheme"] = "bearer";
+        // 第三方模式默认只放行推理域名；允许 Cowork / Code 工具访问所有外网域名。
+        g["coworkEgressAllowedHosts"] = new JsonArray("*");
         // 名字后面加 [1m]：桌面应用把模型名原样交给 Claude Code，带 [1m] 才按 1M 上下文算（和命令行的默认一样）
         g["inferenceModels"] = new JsonArray([.. models.Select(m => (JsonNode)With1M(m))]);
         JsonFile.Write(file, g);

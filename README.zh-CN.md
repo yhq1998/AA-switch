@@ -88,6 +88,7 @@ Codex（命令行或 IDE 插件）、Claude Code（终端或 IDE 插件）至少
 - 切回账号后如果 Codex 让你登录，只是登录态过期了，登一次就好。
 - 每次切换前的备份在 `~/.codex/codex-mode-backups` 和 `~/.claude/claude-mode-backups`（Windows 上 `~` 是 `C:\Users\你的用户名`；只留最近 20 次），各自"更多"里的 **打开备份文件夹** 可以直达。
 - Claude Code 走 API 时，依赖 Claude 账号的功能（发布 Artifact、云端会话、/schedule、connectors）暂时不可用，切回账号就恢复。
+- Claude 桌面应用切到 API 时，默认允许 Cowork / Code 工具访问所有外网域名；已有的域名白名单也会被替换。网页抓取仍受 Claude 内置的 localhost / 内网访问限制。
 - macOS 上，Claude Code 的开关同时管终端 / IDE 插件和 Claude 桌面应用的 Code 标签。桌面应用启动 Code 会话时会强制使用自己的登录凭据，所以切到 API 时 AA Switch 会把整个桌面应用切到第三方推理模式并重启它，会话列表自动同步；API 模式下桌面应用的普通聊天不可用，切回账号即恢复。
 
 ---

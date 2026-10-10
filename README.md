@@ -90,6 +90,7 @@ Turn on **Launch at login** in the menu and AA Switch is always there. When a ne
 - If Codex asks you to sign in after switching back to your account, your session simply expired. Sign in once and you're set.
 - Backups taken before every switch are kept in `~/.codex/codex-mode-backups` and `~/.claude/claude-mode-backups` (on Windows `~` is `C:\Users\you`; the latest 20). **Open backups** under each product's **More** menu takes you there.
 - While Claude Code is on API, features that need your Claude account (publishing Artifacts, cloud sessions, /schedule, connectors) are unavailable until you switch back.
+- Switching the Claude desktop app to API allows Cowork / Code tools to reach all public internet domains, replacing any existing domain allowlist. Claude's built-in web fetch restrictions on localhost and private-network addresses still apply.
 - On macOS, the Claude Code switch covers both the terminal / IDE extensions and the Claude desktop app's Code tab. The desktop app forces its own login credential onto the Code sessions it starts, so switching to API also moves the whole desktop app into its third-party inference mode and restarts it, syncing the session list across. In API mode the desktop app's regular Chat is unavailable; switching back to the account restores it.
 
 ---

@@ -44,7 +44,7 @@
 #   （直接给定列表，不问网关，供图形界面把用户确认过的列表写回来）、CLAUDE_MODE_DRY_RUN=1（只打印 models= / current= /
 #   desktop=，什么都不写，供图形界面先弹确认框）。
 set -eu
-CLAUDE_MODE_VERSION="1.4.1"
+CLAUDE_MODE_VERSION="1.4.3"
 
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS="$CLAUDE_HOME/settings.json"
@@ -280,6 +280,8 @@ function run(argv) {
     g.inferenceGatewayBaseUrl = a;
     g.inferenceGatewayApiKey = b;
     g.inferenceGatewayAuthScheme = 'bearer';
+    // 第三方模式默认只放行推理域名；允许 Cowork / Code 工具访问所有外网域名。
+    g.coworkEgressAllowedHosts = ['*'];
     // 名字后面加 [1m]：桌面应用把模型名原样交给 Claude Code，带 [1m] 才按 1M 上下文算（和命令行的默认一样，不管网关支不支持）
     g.inferenceModels = c.split(',').map(x => x.trim()).filter(x => x).map(x => /\[1m\]$/i.test(x) ? x : x + '[1m]');
     writeJSON(file, g); writeJSON(meta, m);

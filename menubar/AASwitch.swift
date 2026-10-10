@@ -1098,6 +1098,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func probe(_ p: Product, url: String, key: String, headers: String) -> (ok: Bool, message: String?, blocking: Bool) {
         let endpoint = p.resource == "codex-mode" ? url + "/models" : url + "/v1/models"
         var args = ["-s", "-m", "12", "-w", "\n%{http_code}", endpoint, "-H", "Authorization: Bearer " + key]
+        // Claude Code 的测试请求带上桌面应用的客户端标识，避免被"只允许 Claude Code 客户端"的网关分组拒绝
+        if p.resource == "claude-mode" {
+            args += ["-H", "x-anthropic-billing-header: cc_entrypoint=claude-desktop-3p"]
+        }
         for pair in headers.split(separator: ",") {
             let kv = pair.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
             if kv.count == 2, !kv[0].isEmpty { args += ["-H", kv[0] + ": " + kv[1]] }
@@ -1371,6 +1375,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let header = add(p.name, enabled: false)
         header.attributedTitle = NSAttributedString(string: p.name, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
         header.image = productIcon(p)
+        // 菜单里不可点又带 attributedTitle 的项，系统不画 image（窗口版自己画，不受影响），所以菜单里换成自绘的一行
+        if building === self.menu { header.view = headerRow(p.name, icon: header.image) }
         if m == "missing" {
             add("未找到 \(p.script)", enabled: false)
             add("请重新安装 \(appName)", enabled: false)
@@ -1460,6 +1466,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         item.target = self
         item.isEnabled = enabled && action != nil
         return item
+    }
+    // 菜单里的产品标题行：图标 + 粗体名字，左边和普通菜单项的文字对齐
+    private func headerRow(_ title: String, icon: NSImage?) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
+        var views: [NSView] = []
+        if let icon = icon {
+            let iv = NSImageView(image: icon)
+            iv.imageScaling = .scaleProportionallyUpOrDown
+            iv.widthAnchor.constraint(equalToConstant: 16).isActive = true
+            iv.heightAnchor.constraint(equalToConstant: 16).isActive = true
+            views.append(iv)
+        }
+        views.append(label)
+        let stack = NSStackView(views: views)
+        stack.orientation = .horizontal
+        stack.spacing = 6
+        stack.alignment = .centerY
+        stack.edgeInsets = NSEdgeInsets(top: 3, left: 14, bottom: 3, right: 14)
+        stack.frame = NSRect(origin: .zero, size: stack.fittingSize)
+        return stack
     }
     @discardableResult
     private func add(_ title: String, _ action: Selector? = nil, enabled: Bool = true) -> NSMenuItem {

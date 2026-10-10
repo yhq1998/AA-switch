@@ -57,6 +57,9 @@ public static class Gateway
         http.Timeout = TimeSpan.FromSeconds(15);
         using var req = new HttpRequestMessage(HttpMethod.Get, modelsUrl);
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        // Claude Code 的测试请求带上桌面应用的客户端标识，避免被"只允许 Claude Code 客户端"的网关分组拒绝
+        if (modelsUrl.Contains("/v1/models"))
+            req.Headers.TryAddWithoutValidation("x-anthropic-billing-header", "cc_entrypoint=claude-desktop-3p");
         foreach (var (name, value) in ParseHeaderPairs(headerPairs)) req.Headers.TryAddWithoutValidation(name, value);
         try
         {
