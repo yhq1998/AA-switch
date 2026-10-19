@@ -7,7 +7,7 @@
 #   version.txt     版本号，site/deploy.sh 用它写 latest.json 的 windows 段
 # UPDATE_URL 是官网 latest.json 的地址，写进程序里用来检查更新；不设则这个包不检查更新。
 # VERSION 不设则用仓库根目录的 VERSION 文件（和 Mac 版共用一个版本号）。
-set -eu
+set -euo pipefail
 cd "$(dirname "$0")"
 export DOTNET_ROOT="${DOTNET_ROOT:-/opt/homebrew/opt/dotnet/libexec}" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 VERSION="${VERSION:-$(tr -d '[:space:]' < ../VERSION)}"
@@ -23,5 +23,6 @@ dotnet publish src/AASwitch.Tray "${COMMON[@]}" -p:EnableCompressionInSingleFile
 echo "· 命令行"
 dotnet publish src/AASwitch.Cli "${COMMON[@]}" -p:PublishTrimmed=true -o dist >/dev/null
 printf '%s\n' "$VERSION" > dist/version.txt
+python3 ../scripts/release_artifacts.py record windows dist
 ls -lh dist | sed 1d
 [ -n "${UPDATE_URL:-}" ] || echo "提示：没有设置 UPDATE_URL，这个包不会检查更新。"

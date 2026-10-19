@@ -28,6 +28,8 @@ curl -fsSL https://你的托管目录/setup.sh | bash
 
 菜单栏工具的日志在 `~/.codex/codex-mode-menubar.log`。
 
+macOS 的 Codex 切换会先正常退出运行中的 ChatGPT / Codex 桌面应用，再向当前用户精确匹配名称的桌面、`codex`、`codex-app-server` 进程发送 TERM，最多等 5 秒后对剩余进程发送 KILL，再等 2 秒；仍有进程时列出名称和 PID，停止切换，配置和会话不动。这样处理的是空闲后台也会阻挡切换的问题。正在执行的 Codex 任务会中断，桌面应用会重新打开，CLI / IDE 会话需用户自行重开。进程退出与恢复的隔离回归测试：`python3 -m unittest discover -s tests -p test_codex_processes.py`；测试替换全部进程操作，不会结束真实进程。
+
 ## 官网（site/）
 
 React + Vite + TypeScript + Tailwind，动效用 framer-motion，图标用 lucide-react。构建产物是纯静态文件。
@@ -111,6 +113,17 @@ server {
 
 ### 每次发布
 
+发布前先提交全部构建输入，并增加根目录 `VERSION`；禁止用同一个版本号替换不同内容的包。Mac 构建还会跑 `tests/` 下的隔离回归测试，Windows 构建会传播测试失败状态。
+两个构建脚本都会输出 `release-manifest.json`，记录源码提交、构建输入及产物的 SHA256；Mac 同时校验包内两个脚本与源码逐字一致，Windows 校验两个 exe 的内部文件版本。
+`site/deploy.sh` 上传前会校验清单、当前提交、源码和版本；源码改变后必须重新构建，两平台分开发布时请把另一个平台的旧产物移出默认 dist 路径。
+线上已有同版本但哈希不同、降级、线上索引读取失败都会停止发布。安装包上传完成后才原子替换 `latest.json`；清单也随包上传到官网，并应作为 GitHub Release 资产保留。
+GitHub Release 必须使用同一批已校验的包，tag 指向清单中的提交，不能重新构建另一份。发完从官网和 GitHub 各下载一次核对 SHA256。
+
+```bash
+python3 scripts/release_artifacts.py verify mac menubar/dist
+python3 scripts/release_artifacts.py verify windows windows/dist
+```
+
 ```bash
 cd menubar
 DEFAULT_BASE_URL=https://api.example.com/v1 \
@@ -166,7 +179,7 @@ Windows 版目前没有代码签名，所以只信 https，且下载地址必须
 
 ### 升级
 
-脚本里有 `CODEX_MODE_VERSION`，AA Switch 启动时发现自带的脚本比已装的新就自动替换（旧的备份到 `~/.codex/codex-mode-backups/`）。发新版时改这个版本号、重新构建、把新 dmg 发给同事覆盖安装即可。
+脚本里有 `CODEX_MODE_VERSION` / `CLAUDE_MODE_VERSION`，AA Switch 启动时发现自带的脚本比已装的新，或版本相同但内容不同，就备份并替换；已装脚本版本更高时保留。发新版时增加修改过的脚本版本和根目录应用版本，再重新构建。升级不会主动中断 Claude 会话；要让已有桌面网关配置中的网络放行设置生效，请用“更多 → 重新应用 API 配置并重启 Claude 桌面应用”。
 
 ## 原理
 

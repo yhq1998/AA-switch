@@ -15,13 +15,14 @@
 #   NOTARY_PROFILE  xcrun notarytool store-credentials 保存的凭据名；设了才公证
 #   DEFAULT_BASE_URL / DEFAULT_HEADERS / DEFAULT_LEGACY_KEYCHAIN_SERVICE  打进包里的默认配置（同 setup.sh）
 #   UPDATE_URL    官网上 latest.json 的地址（site/deploy.sh 会生成它）；设了 App 会每天检查一次，有新版本就在菜单里提示
-set -eu
+set -euo pipefail
 cd "$(dirname "$0")"
 command -v swiftc >/dev/null || { echo "需要 swiftc：xcode-select --install" >&2; exit 1; }
 
 # 打包前先在一个空的临时家目录里把两个脚本的主要路径跑一遍（模拟新用户），不通过就不出包
 echo "· 冒烟测试"
 ../smoke-test.sh || { echo "冒烟测试没有通过，已停止打包。" >&2; exit 1; }
+python3 -m unittest discover -s ../tests
 
 APP_NAME="${APP_NAME:-AA Switch}"
 EXEC_NAME="${EXEC_NAME:-AASwitch}"
@@ -67,6 +68,7 @@ if [ "$SIGN_IDENTITY" = "-" ]; then
   echo "· ad-hoc 签名"
   codesign --force --sign - "$APP"
   tar -C "$OUT" -czf "$OUT/AASwitch.app.tar.gz" "$APP_NAME.app"
+  python3 ../scripts/release_artifacts.py record mac "$OUT"
   cleanup_app
   echo "已生成 $OUT/AASwitch.app.tar.gz（内部测试用；正式发布请设置 SIGN_IDENTITY）"
   exit 0
@@ -99,4 +101,5 @@ if [ -n "${NOTARY_PROFILE:-}" ]; then
 else
   echo "已生成 ${DMG}（未公证；设置 NOTARY_PROFILE 可自动公证）"
 fi
+python3 ../scripts/release_artifacts.py record mac "$OUT"
 cleanup_app

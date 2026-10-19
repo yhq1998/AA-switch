@@ -7,7 +7,7 @@
 #   SMOKE_KEEP=1 ./smoke-test.sh         失败后保留临时目录，方便看现场
 #
 # 不碰真实环境：HOME、CODEX_HOME、CLAUDE_CONFIG_DIR、桌面应用数据目录都指到临时目录；钥匙串（security）、网关探测（curl）、
-# 进程检查（pgrep）、打开应用（open）和 codex 命令行都用 PATH 最前面的假替身；osascript 只放行读写 JSON 的 JavaScript，
+# 进程检查 / 结束（pgrep、pkill）、打开应用（open）和 codex 命令行都用 PATH 最前面的假替身；osascript 只放行读写 JSON 的 JavaScript，
 # “让某个应用退出”那种一律不执行。用系统自带的 /bin/bash（3.2）跑，和用户机器上一致。
 # 测不到的：菜单和弹窗、真实网关、真的 Codex / Claude 对配置的反应。
 set -u
@@ -54,12 +54,32 @@ cat > "$T/bin/pgrep" <<'EOF'
 #!/bin/bash
 # 假进程表：默认什么都没在运行。$SMOKE_PROC/app 存在 = 应用开着；codex_forever 存在 = 一直有 codex 进程；
 # codex_until 里是个时间戳，到点之前算有 codex 进程（模拟应用自带的子进程比主进程晚退）
-case "${2:-}" in
-  Codex) [ -f "$SMOKE_PROC/app" ] ;;
-  Claude) [ -f "$SMOKE_PROC/claude_app" ] ;;
+name=""
+while [ $# -gt 0 ]; do
+  case "$1" in -u) shift 2 ;; -x) name="$2"; shift 2 ;; *) exit 2 ;; esac
+done
+case "$name" in
+  Codex) [ -f "$SMOKE_PROC/app" ] && echo 9001 ;;
+  Claude) [ -f "$SMOKE_PROC/claude_app" ] && echo 9002 ;;
   codex)
-    [ -f "$SMOKE_PROC/codex_forever" ] && exit 0
-    [ -f "$SMOKE_PROC/codex_until" ] && [ "$(date +%s)" -lt "$(cat "$SMOKE_PROC/codex_until")" ] ;;
+    if [ -f "$SMOKE_PROC/codex_forever" ] || { [ -f "$SMOKE_PROC/codex_until" ] && [ "$(date +%s)" -lt "$(cat "$SMOKE_PROC/codex_until")" ]; }; then
+      echo 9003
+    else exit 1; fi ;;
+  *) exit 1 ;;
+esac
+EOF
+cat > "$T/bin/pkill" <<'EOF'
+#!/bin/bash
+# 只改假进程表，绝不结束真实进程。
+echo "$*" >> "$SMOKE_PROC/pkill.log"
+[ "${SMOKE_KEEP_PROCESSES:-}" != 1 ] || exit 1
+name=""
+while [ $# -gt 0 ]; do
+  case "$1" in -TERM|-KILL) shift ;; -u) shift 2 ;; -x) name="$2"; shift 2 ;; *) exit 2 ;; esac
+done
+case "$name" in
+  Codex) rm -f "$SMOKE_PROC/app" ;;
+  codex) rm -f "$SMOKE_PROC/codex_forever" "$SMOKE_PROC/codex_until" ;;
   *) exit 1 ;;
 esac
 EOF
@@ -191,7 +211,15 @@ ok "应用自带的 codex 子进程晚 2 秒退出时，等它而不是报错"
 has "切完重新打开了应用" "$(cat "$SMOKE_PROC/open.log" 2>/dev/null)" "-a Codex"
 touch "$SMOKE_PROC/app" "$SMOKE_PROC/codex_forever"; rm -f "$SMOKE_PROC/open.log"
 CODEX_MODE_FORCE="" CODEX_MODE_NO_REOPEN="" run codex fix-threads
-fails "还有外部 codex 会话时切换"; has "报错说清楚了" "$ERR" "codex 命令行或 IDE"
+ok "自动关闭外部 codex 会话后切换"
+has "给外部 codex 发送 TERM" "$(cat "$SMOKE_PROC/pkill.log" 2>/dev/null)" "-TERM -u $(id -u) -x codex"
+has "切换成功后把应用重新打开" "$(cat "$SMOKE_PROC/open.log" 2>/dev/null)" "-a Codex"
+touch "$SMOKE_PROC/app" "$SMOKE_PROC/codex_forever"; rm -f "$SMOKE_PROC/open.log"
+BEFORE="$(sum "$CODEX_HOME/config.toml")"; AUTH_BEFORE="$(sum "$CODEX_HOME/auth.json")"
+CODEX_MODE_FORCE="" CODEX_MODE_NO_REOPEN="" SMOKE_KEEP_PROCESSES=1 run codex api
+fails "关闭失败时停止切换"; has "报错列出剩余进程 PID" "$ERR" "codex PID：9003"
+eq "关闭失败时配置未修改" "$(sum "$CODEX_HOME/config.toml")" "$BEFORE"
+eq "关闭失败时登录态未修改" "$(sum "$CODEX_HOME/auth.json")" "$AUTH_BEFORE"
 has "切换失败也把应用重新打开" "$(cat "$SMOKE_PROC/open.log" 2>/dev/null)" "-a Codex"
 rm -f "$SMOKE_PROC/codex_forever"; touch "$SMOKE_PROC/app"; rm -f "$SMOKE_PROC/open.log"
 CODEX_MODE_FORCE="" CODEX_MODE_NO_REOPEN="" SMOKE_LOGIN_FAIL=1 run codex api

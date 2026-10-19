@@ -84,7 +84,7 @@ Codex（命令行或 IDE 插件）、Claude Code（终端或 IDE 插件）至少
 
 ## 小提示
 
-- 如果终端或 IDE 里也开着 Codex，先把它们关掉。AA Switch 会提醒你。
+- macOS 上切换 Codex 会自动退出 ChatGPT / Codex 桌面应用，并关闭当前用户的 Codex 终端和 IDE 会话；正在执行的任务会中断。后台进程先正常终止，仍不退出时再强制结束，确认关闭后才修改配置。桌面应用切换后会重新打开，终端 / IDE 会话需要自己重新开启。Windows 上仍需手动关闭。
 - 切回账号后如果 Codex 让你登录，只是登录态过期了，登一次就好。
 - 每次切换前的备份在 `~/.codex/codex-mode-backups` 和 `~/.claude/claude-mode-backups`（Windows 上 `~` 是 `C:\Users\你的用户名`；只留最近 20 次），各自"更多"里的 **打开备份文件夹** 可以直达。
 - Claude Code 走 API 时，依赖 Claude 账号的功能（发布 Artifact、云端会话、/schedule、connectors）暂时不可用，切回账号就恢复。

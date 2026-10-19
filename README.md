@@ -86,7 +86,7 @@ Turn on **Launch at login** in the menu and AA Switch is always there. When a ne
 
 ## Good to know
 
-- If Codex is also running in a terminal or an IDE, close those first. AA Switch will remind you.
+- On macOS, switching Codex automatically quits the ChatGPT / Codex desktop apps and closes the current user's Codex CLI and IDE sessions, interrupting any active tasks. Background processes receive a graceful termination signal, followed by a forced stop if needed; configuration changes only after they exit. Desktop apps reopen afterwards; restart CLI / IDE sessions yourself. On Windows, close these sessions manually.
 - If Codex asks you to sign in after switching back to your account, your session simply expired. Sign in once and you're set.
 - Backups taken before every switch are kept in `~/.codex/codex-mode-backups` and `~/.claude/claude-mode-backups` (on Windows `~` is `C:\Users\you`; the latest 20). **Open backups** under each product's **More** menu takes you there.
 - While Claude Code is on API, features that need your Claude account (publishing Artifacts, cloud sessions, /schedule, connectors) are unavailable until you switch back.

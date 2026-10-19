@@ -513,7 +513,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         try? fm.createDirectory(atPath: p.home, withIntermediateDirectories: true)
         let installed = fm.contents(atPath: p.script)
         let newer = version(of: data, key: p.versionKey), current = version(of: installed, key: p.versionKey)
-        if installed == nil || current.lexicographicallyPrecedes(newer) {
+        if installed == nil || current.lexicographicallyPrecedes(newer) || (current == newer && installed != data) {
             if let old = installed {
                 try? fm.createDirectory(atPath: p.backups, withIntermediateDirectories: true)
                 let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "")
@@ -901,7 +901,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let restartsApp = p.resource == "codex-mode" || steps.contains { $0.first == "desktop" }
         busy = true
         busyProduct = p.name
-        self.busyText = busyText ?? (restartsApp ? "正在切换 \(p.name)，应用会退出并重新打开…" : "正在切换 \(p.name)…")
+        self.busyText = busyText ?? (p.resource == "codex-mode" ? "正在关闭 Codex 应用和会话并切换…" : (restartsApp ? "正在切换 \(p.name)，应用会退出并重新打开…" : "正在切换 \(p.name)…"))
         render()
         DispatchQueue.global().async {
             let before = self.terminalSessions(p)   // 切换前已打开的会话切换后仍用旧配置，之后在菜单里提醒
@@ -1432,6 +1432,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         if desktop {
             addSmall("切换会重启 Claude 桌面应用，会话列表自动同步", nil)
+        }
+        if p.resource == "codex-mode" {
+            addSmall("切换会关闭 Codex 桌面、终端和 IDE 会话，当前任务会中断", nil)
         }
         if isMixed(p) {
             add(m == "api" ? "⚠ 配置指向 API 网关，但 Codex 用 ChatGPT 账号登录，请求会失败；再点一次当前模式即可修正"
