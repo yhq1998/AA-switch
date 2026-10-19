@@ -4,9 +4,11 @@ import io
 import json
 from pathlib import Path
 import plistlib
+import struct
 import tarfile
 import tempfile
 import unittest
+import zlib
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,6 +72,7 @@ class ReleaseTests(unittest.TestCase):
             with patch.object(release, "git", return_value="commit-a"), \
                     patch.object(release, "source_state", return_value={"source": "a"}) as state, \
                     patch.object(release, "inspect", return_value={"package": "a"}) as package:
+                release.begin("mac", folder)
                 release.record("mac", folder)
                 release.verify("mac", folder)
                 state.return_value = {"source": "b"}
@@ -79,6 +82,40 @@ class ReleaseTests(unittest.TestCase):
                 package.return_value = {"package": "b"}
                 with self.assertRaisesRegex(ValueError, "内容与构建清单不一致"):
                     release.verify("mac", folder)
+
+    def test_changes_during_build_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            with patch.object(release, "git", return_value="commit-a"), \
+                    patch.object(release, "source_state", return_value={"source": "a"}) as state:
+                release.begin("mac", folder)
+                state.return_value = {"source": "b"}
+                with self.assertRaisesRegex(ValueError, "构建过程中源码或提交已改变"):
+                    release.record("mac", folder)
+
+    def test_windows_checks_application_version_inside_compressed_bundle(self):
+        signature = bytes.fromhex("8b1202b96a612038727b930214d7a03213f5b9e6efae3318ee3b2dce24b36aae")
+        resource = struct.pack("<IIII", 0xfeef04bd, 0x10000, (2 << 16) | 4, 4 << 16)
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            (folder / "version.txt").write_text("2.4.4\n")
+            for name in ("AA Switch.exe", "aaswitch.exe"):
+                assembly_name = (Path(name).stem + ".dll").encode()
+                app = b"MZ" + resource
+                compressor = zlib.compressobj(wbits=-15)
+                packed = compressor.compress(app) + compressor.flush()
+                prefix = b"MZ" + b"\0" * 6
+                offset = len(prefix) + 8 + len(signature)
+                header_offset = offset + len(packed)
+                data = prefix + struct.pack("<Q", header_offset) + signature + packed
+                header = struct.pack("<IIi", 6, 0, 1) + b"\x02id" + b"\0" * 40
+                entry = struct.pack("<qqqB", offset, len(app), len(packed), 1)
+                data += header + entry + bytes([len(assembly_name)]) + assembly_name
+                (folder / name).write_bytes(data)
+            release.inspect_windows(folder, "2.4.4")
+            (folder / "version.txt").write_text("2.4.3\n")
+            with self.assertRaises(ValueError):
+                release.inspect_windows(folder, "2.4.3")
 
     def test_pre_manifest_packages_are_rejected(self):
         with tempfile.TemporaryDirectory() as temp:

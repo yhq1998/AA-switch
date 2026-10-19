@@ -17,6 +17,7 @@ case "${UPDATE_URL:-}" in ''|https://*) ;; *) echo "UPDATE_URL 必须是 https �
 echo "· 测试"
 dotnet test -c Release --nologo -v q | tail -n 1
 rm -rf dist
+python3 ../scripts/release_artifacts.py begin windows dist
 COMMON=(-c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none "-p:Version=$VERSION" -v q)
 echo "· 托盘程序 $VERSION"
 dotnet publish src/AASwitch.Tray "${COMMON[@]}" -p:EnableCompressionInSingleFile=true "-p:UpdateUrl=${UPDATE_URL:-}" -o dist >/dev/null

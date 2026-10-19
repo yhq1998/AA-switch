@@ -34,8 +34,18 @@ SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 COPYRIGHT="${COPYRIGHT:-© $(date +%Y)}"
 UPDATE_URL="${UPDATE_URL:-}"
 
+sign() {
+  local attempt
+  for attempt in 1 2 3; do
+    if codesign "$@"; then return 0; fi
+    [ "$attempt" = 3 ] || { echo "签名服务失败，重试（$attempt/3）…" >&2; sleep 2; }
+  done
+  return 1
+}
+
 OUT=dist; APP="$OUT/$APP_NAME.app"; RES="$APP/Contents/Resources"
 rm -rf "$OUT"; mkdir -p "$APP/Contents/MacOS" "$RES"
+python3 ../scripts/release_artifacts.py begin mac "$OUT"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 cleanup_app() {  # 打包完就删掉解包的 .app 并从 LaunchServices 注销，否则 Spotlight / 启动台会多出一份
   "$LSREGISTER" -u "$(cd "$OUT" && pwd)/$APP_NAME.app" >/dev/null 2>&1 || true
@@ -75,7 +85,7 @@ if [ "$SIGN_IDENTITY" = "-" ]; then
 fi
 
 echo "· Developer ID 签名（Hardened Runtime）"
-codesign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$SIGN_IDENTITY" "$APP"
+sign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$SIGN_IDENTITY" "$APP"
 codesign --verify --strict --verbose=2 "$APP"
 
 STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
@@ -89,7 +99,7 @@ fi
 echo "· 打 dmg（带“拖到 Applications”的背景图）"
 DMG="$OUT/$APP_NAME.dmg"
 ./make-dmg.sh "$APP" "$DMG"
-codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
+sign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
 tar -C "$OUT" -czf "$OUT/AASwitch.app.tar.gz" "$APP_NAME.app"
 
 if [ -n "${NOTARY_PROFILE:-}" ]; then
