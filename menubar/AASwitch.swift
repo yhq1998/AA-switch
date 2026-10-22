@@ -1373,8 +1373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         l.key == "注意" || l.key == "新地址尚未生效" || l.value.hasPrefix("未登录") || l.value.hasPrefix("未保存")
     }
 
-    // 一个产品的分组：带产品图标的标题、一行“账号 ⟷ API”开关（Claude 的开关同时管命令行和桌面应用）、小字的 API 地址、只在异常时出现的提示行；
-    // 配置、重新应用和正常态的详细信息都收进“更多”子菜单，正常时不占地方
+    // 一个产品的分组：带图标的标题、账号 / API 开关和“更多”。地址、切换说明和详细状态收进“更多”，异常提示仍在主菜单展示。
     private func renderSection(_ p: Product, toApi: Selector, configure: Selector, backups: Selector) {
         let menu = building
         let m = mode[p.name] ?? "unknown"
@@ -1425,9 +1424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         if !loaded {
             addSmall("读取中…", nil)
-        } else if configured {
-            addSmall((m == "api" ? "API 请求发往 " : "切到 API 后请求发往 ") + shortURL(url), nil)
-        } else {
+        } else if !configured {
             addSmall("还没配置 API 地址，点击填写…", configure)
         }
         if m == "none" {
@@ -1435,12 +1432,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         if mixed {
             add("⚠ 命令行\(m == "api" ? "在 API" : "在账号")、桌面应用\(desktopMode == "gateway" ? "在网关" : "在账号")，点 API 会把两边都切到 API", enabled: false)
-        }
-        if desktop {
-            addSmall("切换会重启 Claude 桌面应用，会话列表自动同步", nil)
-        }
-        if p.resource == "codex-mode" {
-            addSmall("切换会关闭 Codex 桌面、终端和 IDE 会话，当前任务会中断", nil)
         }
         if isMixed(p) {
             add(m == "api" ? "⚠ 配置指向 API 网关，但 Codex 用 ChatGPT 账号登录，请求会失败；再点一次当前模式即可修正"
@@ -1463,6 +1454,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         let details = info.filter { !isWarning($0) && $0.key != "模式" && !Self.urlKeys.contains($0.key) }
         more.addItem(.separator())
+        if loaded && configured {
+            more.addItem(item((m == "api" ? "API 请求发往 " : "切到 API 后请求发往 ") + shortURL(url), nil, enabled: false))
+        }
+        if desktop {
+            more.addItem(item("切换会重启 Claude 桌面应用，会话列表自动同步", nil, enabled: false))
+        }
+        if p.resource == "codex-mode" {
+            more.addItem(item("切换会关闭 Codex 桌面、终端和 IDE 会话，当前任务会中断", nil, enabled: false))
+        }
         if !loaded { more.addItem(item("正在读取状态…", nil, enabled: false)) }
         for l in details { more.addItem(item(l.key + (l.value.isEmpty ? "" : "：" + l.value), nil, enabled: false)) }
         if let v = scriptVersion[p.name], !v.isEmpty { more.addItem(item("脚本：\(p.resource) \(v)", nil, enabled: false)) }   // 排查问题时看
