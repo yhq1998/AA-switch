@@ -70,7 +70,6 @@ private struct ClaudeEnvironmentConfiguration {
 }
 
 final class ClaudeAccountEnvironmentController: NSObject, NSWindowDelegate {
-    private let accountAvailable: () -> Bool
     private var window: NSWindow?
     private var process: Process?
     private var generation = UUID()
@@ -86,8 +85,7 @@ final class ClaudeAccountEnvironmentController: NSObject, NSWindowDelegate {
     private var export: NSButton!
     private let stateDirectory: URL
 
-    init(accountAvailable: @escaping () -> Bool, stateDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/AA Switch/claude-account-environment", isDirectory: true)) {
-        self.accountAvailable = accountAvailable
+    init(stateDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/AA Switch/claude-account-environment", isDirectory: true)) {
         self.stateDirectory = stateDirectory
     }
 
@@ -101,12 +99,12 @@ final class ClaudeAccountEnvironmentController: NSObject, NSWindowDelegate {
 
     private func buildWindow() {
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 710, height: 640), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        win.title = "Claude 账号环境检测"
+        win.title = "Claude 环境检测"
         win.isReleasedWhenClosed = false
         win.minSize = NSSize(width: 620, height: 600)
         win.delegate = self
         win.center()
-        let title = NSTextField(labelWithString: "Claude 账号环境检测")
+        let title = NSTextField(labelWithString: "Claude 环境检测")
         title.font = .boldSystemFont(ofSize: 20)
         let note = NSTextField(wrappingLabelWithString: "沿用 Claude Switcher 的全部 14 项检测标准；结果不能保证账号可用或防止 IP 泄漏。“保镖”仅检查已有安装。")
         note.textColor = .secondaryLabelColor
@@ -158,10 +156,10 @@ final class ClaudeAccountEnvironmentController: NSObject, NSWindowDelegate {
     }
 
     @objc private func configure() {
-        guard process == nil, accountAvailable() else { showAccountRequired(); return }
+        guard process == nil else { return }
         let value = configuration ?? ClaudeEnvironmentConfiguration()
         let alert = NSAlert()
-        alert.messageText = "Claude 账号检测设置"
+        alert.messageText = "Claude 环境检测设置"
         alert.informativeText = "填写你期望的账号网络环境。首次预填原项目默认值（美国 / 纽约），请按实际情况修改。仅保存检测基准，不修改系统、代理或 Claude 配置。\n检测会访问 Cloudflare、ipinfo、Claude / Anthropic 和原版 STUN 服务；出口 IP 历史仅保存在本机。"
         alert.addButton(withTitle: "保存并检测")
         alert.addButton(withTitle: "取消")
@@ -197,13 +195,8 @@ final class ClaudeAccountEnvironmentController: NSObject, NSWindowDelegate {
         start()
     }
 
-    private func showAccountRequired() {
-        status.stringValue = "仅在 Claude 账号模式下提供环境检测；请先切回账号模式。"
-    }
-
     @objc private func start() {
         guard process == nil else { return }
-        guard accountAvailable() else { showAccountRequired(); return }
         guard let config = configuration else { configure(); return }
         report = nil
         reportDate = nil
@@ -290,11 +283,11 @@ final class ClaudeAccountEnvironmentController: NSObject, NSWindowDelegate {
     @objc private func exportReport() {
         guard let report = report else { return }
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "Claude-账号环境检测.txt"
+        panel.nameFieldStringValue = "Claude-环境检测.txt"
         panel.message = "结果包含出口 IP 及本机环境信息，请确认后再分享。"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let date = reportDate.map { ISO8601DateFormatter().string(from: $0) } ?? ""
-        let output = "AA Switch \(appVersion) · Claude 账号环境检测\n\(date)\n\(configuration?.description ?? "")\n来源：Claude Switcher（MIT），commit 303cd1057cc1ab2f24cfac5b4c0a43094011caa1\n\(report.summary)\n\n\(report.raw)\n"
+        let output = "AA Switch \(appVersion) · Claude 环境检测\n\(date)\n\(configuration?.description ?? "")\n来源：Claude Switcher（MIT），commit 303cd1057cc1ab2f24cfac5b4c0a43094011caa1\n\(report.summary)\n\n\(report.raw)\n"
         do { try Data(output.utf8).write(to: url, options: [.atomic]) }
         catch { status.stringValue = "导出失败：\(error.localizedDescription)" }
     }

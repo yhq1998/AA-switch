@@ -84,9 +84,9 @@ Turn on **Launch at login** in the menu and AA Switch is always there. When a ne
 - The Claude desktop app's Code tab cannot be moved to API yet (see the last item under "Good to know"). Claude Code in the terminal and in IDE extensions is unaffected.
 - Launch at login remembers where the exe was when you turned it on, so don't move the exe afterwards.
 
-### Claude account environment checks (macOS)
+### Claude environment checks (macOS)
 
-In Claude account mode (with the desktop app also outside gateway mode), choose **账号环境检测…** from the Claude Code section. Confirm the proxy client, expected country, timezone, locale and Clash Verge group before the first run. Initial values follow the upstream US / New York defaults; adjust them for your environment.
+Choose the permanent **Claude 环境检测…** entry in the main menu, in either account or API mode. Confirm the proxy client, expected country, timezone, locale and Clash Verge group before the first run. Initial values follow the upstream US / New York defaults; adjust them for your environment. Checks retain the upstream Claude account criteria and do not test custom API gateways.
 
 All 14 checks are copied unchanged from [Claude Switcher](https://github.com/YOURSJEYO/claude-switcher), including the Python UDP/STUN probe. Python 3 must already be installed. You can rerun, change detection settings or export results. This entry does not repair system settings, switch login snapshots, install daemons or block account switching. An absent upstream bodyguard is reported as a failed check. Upstream fake-IP/TUN and IPv6 criteria do not guarantee account availability or prevent IP disclosure; Codex and API gateways are outside this check's scope.
 

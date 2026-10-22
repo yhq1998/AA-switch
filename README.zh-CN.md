@@ -82,9 +82,9 @@ Codex（命令行或 IDE 插件）、Claude Code（终端或 IDE 插件）至少
 - Claude 桌面应用的 Code 标签还不能切到 API（见下面“小提示”的最后一条），终端和 IDE 插件里的 Claude Code 不受影响。
 - 开机自动启动记的是 exe 当时所在的位置，打开它之后就别再移动 exe 了。
 
-### Claude 账号环境检测（macOS）
+### Claude 环境检测（macOS）
 
-Claude Code 处于账号模式、Claude 桌面应用也未处于网关模式时，菜单中会显示 **账号环境检测…**。首次使用先确认代理客户端、目标国家、时区、地区和 Clash Verge 代理组，再开始检测。初始预填的是原项目的美国 / 纽约基准，请按自己的环境修改。
+菜单中常驻 **Claude 环境检测…**，账号模式和 API 模式都能直接使用，无需切换模式。首次使用先确认代理客户端、目标国家、时区、地区和 Clash Verge 代理组，再开始检测。初始预填的是原项目的美国 / 纽约基准，请按自己的环境修改。检测仍沿用 Claude 账号环境标准，不检测自定义 API 网关。
 
 检测直接复用 [Claude Switcher](https://github.com/YOURSJEYO/claude-switcher) 的 14 项原版判断：代理内核、TUN、出口 IP、IP 一致性、时区、地区、IPv6、DNS、WebRTC/STUN、保镖、规则置顶、客户端语言、ASN 属性和生态可达性。需要已安装 Python 3 运行原版 STUN 探针；AA Switch 不会自动安装依赖。可重新检测、修改检测设置或手动导出结果。
 

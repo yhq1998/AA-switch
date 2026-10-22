@@ -115,14 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let revealNotification = Notification.Name(bundleID + ".reveal")
     private var needsRender = false
     private var products: [Product] { [codex, claude] }
-    private var claudeAccountEnvironmentAvailable: Bool {
-        mode[claude.name] == claude.accountWord && ["account", "absent"].contains(desktopMode)
-    }
-    private lazy var claudeEnvironment = ClaudeAccountEnvironmentController { [weak self] in
-        guard let self = self, !self.busy else { return false }
-        self.readModes()
-        return self.claudeAccountEnvironmentAvailable
-    }
+    private lazy var claudeEnvironment = ClaudeAccountEnvironmentController()
 
     @objc private func checkClaudeAccountEnvironment() {
         claudeEnvironment.show()
@@ -1351,6 +1344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         menu.addItem(.separator())
         renderSection(claude, toApi: #selector(claudeToApi), configure: #selector(configureClaude), backups: #selector(openClaudeBackups))
         menu.addItem(.separator())
+        add("Claude 环境检测…", #selector(checkClaudeAccountEnvironment), enabled: !busy)
         add("刷新状态", #selector(refresh), enabled: !busy)
         add("检查更新", #selector(checkUpdateManually), enabled: !busy)
         add("导出诊断信息…", #selector(exportDiagnostics), enabled: !busy)
@@ -1458,9 +1452,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         let more = NSMenu()
         more.autoenablesItems = false
-        if p.resource == "claude-mode" && claudeAccountEnvironmentAvailable {
-            add("账号环境检测…", #selector(checkClaudeAccountEnvironment), enabled: !busy)
-        }
         more.addItem(item("配置 API 地址 / key…", configure))
         if m == "api" && !busy {   // 手动改过配置文件、或想强制重来时用；表单保存后已自动做这一步
             let claudeDesktop = p.resource == "claude-mode" && desktopMode == "gateway"
