@@ -15,6 +15,10 @@ import zlib
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = "release-manifest.json"
 INPUTS = ".build-inputs.json"
+MAC_RESOURCES = {name: ROOT / name for name in ("codex-mode.sh", "claude-mode.sh")}
+MAC_RESOURCES["claude-account-environment.sh"] = ROOT / "menubar/claude-account-environment.sh"
+MAC_RESOURCES.update({"vendor/claude-switcher/" + name: ROOT / "menubar/vendor/claude-switcher" / name
+                      for name in ("checks.sh", "stun-probe.py", "LICENSE", "UPSTREAM.json")})
 
 
 def require(ok, message):
@@ -56,9 +60,9 @@ def inspect_mac(folder, version):
         base = "AA Switch.app/Contents/"
         info = plistlib.loads(bundle.extractfile(base + "Info.plist").read())
         require(info["CFBundleShortVersionString"] == version, "macOS 安装包版本与 VERSION 不一致")
-        for script in ("codex-mode.sh", "claude-mode.sh"):
+        for script, source in MAC_RESOURCES.items():
             packaged = bundle.extractfile(base + "Resources/" + script).read()
-            require(packaged == (ROOT / script).read_bytes(), f"安装包内 {script} 不是当前源码")
+            require(packaged == source.read_bytes(), f"安装包内 {script} 不是当前源码")
 
 
 def bundled_assembly(data, wanted):

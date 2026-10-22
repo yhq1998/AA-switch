@@ -28,6 +28,8 @@ curl -fsSL https://你的托管目录/setup.sh | bash
 
 菜单栏工具的日志在 `~/.codex/codex-mode-menubar.log`。
 
+macOS 的 Claude 账号环境检测由 `menubar/ClaudeAccountEnvironment.swift` 提供界面，`menubar/claude-account-environment.sh` 只适配参数、依赖和本地状态目录。14 项检测函数及 STUN 探针从 `menubar/vendor/claude-switcher/` 的固定上游提交原样复用；完整源文件保留作比对，不执行、不打进应用包。构建时仅打入检测函数、探针、来源清单和 MIT 许可，并由发布校验逐字比对。更新上游时同步更新来源清单和原样提取区间，运行 `python3 -m unittest discover -s tests -p test_claude_account_environment.py` 验证来源与隔离行为。
+
 macOS 的 Codex 切换会先正常退出运行中的 ChatGPT / Codex 桌面应用，再向当前用户精确匹配名称的桌面、`codex`、`codex-app-server` 进程发送 TERM，最多等 5 秒后对剩余进程发送 KILL，再等 2 秒；仍有进程时列出名称和 PID，停止切换，配置和会话不动。这样处理的是空闲后台也会阻挡切换的问题。正在执行的 Codex 任务会中断，桌面应用会重新打开，CLI / IDE 会话需用户自行重开。进程退出与恢复的隔离回归测试：`python3 -m unittest discover -s tests -p test_codex_processes.py`；测试替换全部进程操作，不会结束真实进程。
 
 ## 官网（site/）

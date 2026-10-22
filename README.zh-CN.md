@@ -82,6 +82,16 @@ Codex（命令行或 IDE 插件）、Claude Code（终端或 IDE 插件）至少
 - Claude 桌面应用的 Code 标签还不能切到 API（见下面“小提示”的最后一条），终端和 IDE 插件里的 Claude Code 不受影响。
 - 开机自动启动记的是 exe 当时所在的位置，打开它之后就别再移动 exe 了。
 
+### Claude 账号环境检测（macOS）
+
+Claude Code 处于账号模式、Claude 桌面应用也未处于网关模式时，菜单中会显示 **账号环境检测…**。首次使用先确认代理客户端、目标国家、时区、地区和 Clash Verge 代理组，再开始检测。初始预填的是原项目的美国 / 纽约基准，请按自己的环境修改。
+
+检测直接复用 [Claude Switcher](https://github.com/YOURSJEYO/claude-switcher) 的 14 项原版判断：代理内核、TUN、出口 IP、IP 一致性、时区、地区、IPv6、DNS、WebRTC/STUN、保镖、规则置顶、客户端语言、ASN 属性和生态可达性。需要已安装 Python 3 运行原版 STUN 探针；AA Switch 不会自动安装依赖。可重新检测、修改检测设置或手动导出结果。
+
+此入口只做检测，不修改系统或代理设置、不切换登录数据、不安装守护进程，也不阻止账号切换。原版“保镖”未安装时会显示未通过；fake-IP/TUN、关闭 IPv6 等结果沿用原项目标准，不能据此保证账号可用或防止 IP 泄漏。此功能不检测 Codex 或 API 网关。
+
+检测会联系 Cloudflare、ipinfo.io、Claude / Anthropic 和原版 STUN 服务。出口 IP 历史及检测结果保存在 `~/Library/Application Support/AA Switch/claude-account-environment/`，不会读取账号凭据；导出文件包含 IP 信息，分享前请自行确认。源码来源、固定提交及 MIT 许可见 [第三方代码说明](menubar/vendor/claude-switcher/README.md)。
+
 ## 小提示
 
 - macOS 上切换 Codex 会自动退出 ChatGPT / Codex 桌面应用，并关闭当前用户的 Codex 终端和 IDE 会话；正在执行的任务会中断。后台进程先正常终止，仍不退出时再强制结束，确认关闭后才修改配置。桌面应用切换后会重新打开，终端 / IDE 会话需要自己重新开启。Windows 上仍需手动关闭。

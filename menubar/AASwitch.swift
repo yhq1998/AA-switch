@@ -115,6 +115,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let revealNotification = Notification.Name(bundleID + ".reveal")
     private var needsRender = false
     private var products: [Product] { [codex, claude] }
+    private var claudeAccountEnvironmentAvailable: Bool {
+        mode[claude.name] == claude.accountWord && ["account", "absent"].contains(desktopMode)
+    }
+    private lazy var claudeEnvironment = ClaudeAccountEnvironmentController { [weak self] in
+        guard let self = self, !self.busy else { return false }
+        self.readModes()
+        return self.claudeAccountEnvironmentAvailable
+    }
+
+    @objc private func checkClaudeAccountEnvironment() {
+        claudeEnvironment.show()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if offerInstallFromDiskImage() { return }   // 要放在单实例检查前面：装新版时得先把已经在跑的旧版关掉
@@ -1446,6 +1458,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         let more = NSMenu()
         more.autoenablesItems = false
+        if p.resource == "claude-mode" && claudeAccountEnvironmentAvailable {
+            add("账号环境检测…", #selector(checkClaudeAccountEnvironment), enabled: !busy)
+        }
         more.addItem(item("配置 API 地址 / key…", configure))
         if m == "api" && !busy {   // 手动改过配置文件、或想强制重来时用；表单保存后已自动做这一步
             let claudeDesktop = p.resource == "claude-mode" && desktopMode == "gateway"
@@ -1571,10 +1586,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
 // 新的菜单栏图标默认排在最左边，刘海屏上最容易被挡住。第一次运行时让它排到靠右的位置（数值是离屏幕右边缘的距离），
 // 用户按住 ⌘ 拖过之后系统会记下新位置，这里不再动
-let iconPositionKey = "NSStatusItem Preferred Position Item-0"
-if UserDefaults.standard.object(forKey: iconPositionKey) == nil { UserDefaults.standard.set(250.0, forKey: iconPositionKey) }
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.accessory)
-app.run()
+@main
+struct AASwitchMain {
+    static func main() {
+        let iconPositionKey = "NSStatusItem Preferred Position Item-0"
+        if UserDefaults.standard.object(forKey: iconPositionKey) == nil { UserDefaults.standard.set(250.0, forKey: iconPositionKey) }
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)
+        withExtendedLifetime(delegate) { app.run() }
+    }
+}

@@ -1,0 +1,29 @@
+{
+  "repository": "https://github.com/YOURSJEYO/claude-switcher",
+  "commit": "303cd1057cc1ab2f24cfac5b4c0a43094011caa1",
+  "license": "MIT",
+  "files": {
+    "core/claude-switch.sh": {
+      "path": "upstream/core/claude-switch.sh",
+      "sha256": "d2a410f3cc40c46c59e3e47759902610f31563fcdc1a8a050957cebf95a9e0d3"
+    },
+    "core/stun-probe.py": {
+      "path": "stun-probe.py",
+      "sha256": "2c891f5f3cf392a6bb736dacc65a945afe89ae8e4d88e353b04fd1f9cd792ab1"
+    },
+    "LICENSE": {
+      "path": "LICENSE",
+      "sha256": "c288d9b3c1c5bdb2038628f39c82b82375570798005c8e263b365057457b393a"
+    }
+  },
+  "check_ranges": [
+    [
+      "# TUN 在线判定:",
+      "# ---------- 安全检查 ----------"
+    ],
+    [
+      "# WebRTC/STUN 探测:",
+      "# 置顶规则写入("
+    ]
+  ]
+}

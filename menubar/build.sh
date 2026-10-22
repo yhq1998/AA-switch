@@ -54,7 +54,7 @@ cleanup_app() {  # 打包完就删掉解包的 .app 并从 LaunchServices 注销
 
 echo "· 编译（arm64 + x86_64）"
 for arch in arm64 x86_64; do
-  swiftc -O -swift-version 5 -target "$arch-apple-macos13.0" -o "$OUT/$EXEC_NAME-$arch" AASwitch.swift
+  swiftc -O -parse-as-library -swift-version 5 -target "$arch-apple-macos13.0" -o "$OUT/$EXEC_NAME-$arch" AASwitch.swift ClaudeAccountEnvironment.swift
 done
 lipo -create -output "$APP/Contents/MacOS/$EXEC_NAME" "$OUT/$EXEC_NAME-arm64" "$OUT/$EXEC_NAME-x86_64"
 rm -f "$OUT/$EXEC_NAME-arm64" "$OUT/$EXEC_NAME-x86_64"
@@ -66,6 +66,11 @@ cp icon/AppIcon.icns "$RES/AppIcon.icns"
 cp icon/menubar/menubar.png icon/menubar/product-*.png "$RES/"
 cp ../codex-mode.sh "$RES/codex-mode.sh"
 cp ../claude-mode.sh "$RES/claude-mode.sh"
+cp claude-account-environment.sh "$RES/claude-account-environment.sh"
+mkdir -p "$RES/vendor/claude-switcher"
+for resource in checks.sh stun-probe.py LICENSE UPSTREAM.json; do
+  cp "vendor/claude-switcher/$resource" "$RES/vendor/claude-switcher/$resource"
+done
 : > "$RES/defaults.conf"
 [ -n "${DEFAULT_BASE_URL:-}" ] && echo "base_url=${DEFAULT_BASE_URL%/}" >> "$RES/defaults.conf"
 [ -n "${DEFAULT_HEADERS:-}" ] && echo "headers=$DEFAULT_HEADERS" >> "$RES/defaults.conf"

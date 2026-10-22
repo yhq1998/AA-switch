@@ -49,8 +49,8 @@ class ReleaseTests(unittest.TestCase):
             folder = Path(temp)
             base = "AA Switch.app/Contents/"
             contents = {base + "Info.plist": plistlib.dumps({"CFBundleShortVersionString": "2.4.4"})}
-            contents.update({base + "Resources/" + name: (ROOT / name).read_bytes()
-                             for name in ("codex-mode.sh", "claude-mode.sh")})
+            contents.update({base + "Resources/" + name: path.read_bytes()
+                             for name, path in release.MAC_RESOURCES.items()})
 
             def pack():
                 with tarfile.open(folder / "AASwitch.app.tar.gz", "w:gz") as bundle:
@@ -64,6 +64,11 @@ class ReleaseTests(unittest.TestCase):
             contents[base + "Resources/claude-mode.sh"] = b'CLAUDE_MODE_VERSION="1.4.1"\n'
             pack()
             with self.assertRaisesRegex(ValueError, "claude-mode.sh 不是当前源码"):
+                release.inspect_mac(folder, "2.4.4")
+            contents[base + "Resources/claude-mode.sh"] = (ROOT / "claude-mode.sh").read_bytes()
+            contents[base + "Resources/vendor/claude-switcher/checks.sh"] = b"changed upstream checks"
+            pack()
+            with self.assertRaisesRegex(ValueError, "checks.sh 不是当前源码"):
                 release.inspect_mac(folder, "2.4.4")
 
     def test_manifest_rejects_changed_sources_and_changed_artifacts(self):

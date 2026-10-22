@@ -84,6 +84,14 @@ Turn on **Launch at login** in the menu and AA Switch is always there. When a ne
 - The Claude desktop app's Code tab cannot be moved to API yet (see the last item under "Good to know"). Claude Code in the terminal and in IDE extensions is unaffected.
 - Launch at login remembers where the exe was when you turned it on, so don't move the exe afterwards.
 
+### Claude account environment checks (macOS)
+
+In Claude account mode (with the desktop app also outside gateway mode), choose **账号环境检测…** from the Claude Code section. Confirm the proxy client, expected country, timezone, locale and Clash Verge group before the first run. Initial values follow the upstream US / New York defaults; adjust them for your environment.
+
+All 14 checks are copied unchanged from [Claude Switcher](https://github.com/YOURSJEYO/claude-switcher), including the Python UDP/STUN probe. Python 3 must already be installed. You can rerun, change detection settings or export results. This entry does not repair system settings, switch login snapshots, install daemons or block account switching. An absent upstream bodyguard is reported as a failed check. Upstream fake-IP/TUN and IPv6 criteria do not guarantee account availability or prevent IP disclosure; Codex and API gateways are outside this check's scope.
+
+Checks contact Cloudflare, ipinfo.io, Claude / Anthropic and the original STUN servers. Local IP history and results live in `~/Library/Application Support/AA Switch/claude-account-environment/`; login credentials are not read. Exported reports contain IP information. See the [third-party source notes](menubar/vendor/claude-switcher/README.md) for the pinned commit and MIT license.
+
 ## Good to know
 
 - On macOS, switching Codex automatically quits the ChatGPT / Codex desktop apps and closes the current user's Codex CLI and IDE sessions, interrupting any active tasks. Background processes receive a graceful termination signal, followed by a forced stop if needed; configuration changes only after they exit. Desktop apps reopen afterwards; restart CLI / IDE sessions yourself. On Windows, close these sessions manually.
