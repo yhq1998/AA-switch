@@ -647,6 +647,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                     buttonRow = row
                 }
                 buttonRow?.addArrangedSubview(button(i))
+                if i.action == #selector(closeWindow) {
+                    buttonRow?.widthAnchor.constraint(equalToConstant: width).isActive = true
+                    let spacer = NSView()
+                    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                    buttonRow?.addArrangedSubview(spacer)
+                }
             } else {
                 let text = i.attributedTitle.map { NSMutableAttributedString(attributedString: $0) } ?? NSMutableAttributedString(
                     string: i.title, attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
@@ -1281,6 +1287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         writeLoginItem()
     }
 
+    @objc private func closeWindow() { panel?.performClose(nil) }
     @objc private func quit() { NSApp.terminate(nil) }
 
     // MARK: Claude Code 的终端 / IDE 会话
@@ -1357,6 +1364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             add(latestTgzURL.isEmpty ? "有新版本 \(latestVersion)，点击下载…" : "有新版本 \(latestVersion)，点击更新…", #selector(openUpdate))
         }
         add("\(appName) \(appVersion)", enabled: false)
+        if forWindow { add("关闭窗口", #selector(closeWindow)) }
         add("退出", #selector(quit))
     }
 
