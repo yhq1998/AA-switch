@@ -1480,6 +1480,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             image?.size = NSSize(width: 16, height: 16)
             image?.isTemplate = true
             item.image = image
+            if #available(macOS 27.0, *) { item.preferredImageVisibility = .visible }
         }
         return item
     }
