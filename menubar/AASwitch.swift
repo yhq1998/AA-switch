@@ -1452,14 +1452,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         let more = NSMenu()
         more.autoenablesItems = false
-        more.addItem(item("配置 API 地址 / key…", configure))
+        more.addItem(item("配置 API 地址 / key…", configure, symbol: "gearshape"))
         if m == "api" && !busy {   // 手动改过配置文件、或想强制重来时用；表单保存后已自动做这一步
             let claudeDesktop = p.resource == "claude-mode" && desktopMode == "gateway"
-            more.addItem(item(p.resource == "codex-mode" ? "重新应用 API 配置并重启 Codex" : (claudeDesktop ? "重新应用 API 配置并重启 Claude 桌面应用" : "重新应用 API 配置"), toApi))
+            more.addItem(item(p.resource == "codex-mode" ? "重新应用 API 配置并重启 Codex" : (claudeDesktop ? "重新应用 API 配置并重启 Claude 桌面应用" : "重新应用 API 配置"), toApi, symbol: "arrow.clockwise"))
         }
-        more.addItem(item("打开备份文件夹", backups))
+        more.addItem(item("打开备份文件夹", backups, symbol: "folder"))
         if desktop {   // 网关提供的模型会变，点一下从网关拉一份最新的，不用手改 claude-mode.conf
-            more.addItem(item("更新最新模型列表…", #selector(updateClaudeModels), enabled: !busy))
+            more.addItem(item("更新最新模型列表…", #selector(updateClaudeModels), enabled: !busy, symbol: "list.bullet.rectangle"))
         }
         let details = info.filter { !isWarning($0) && $0.key != "模式" && !Self.urlKeys.contains($0.key) }
         more.addItem(.separator())
@@ -1470,10 +1470,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         moreItem.submenu = more
         menu.addItem(moreItem)
     }
-    private func item(_ title: String, _ action: Selector?, enabled: Bool = true) -> NSMenuItem {
+    private func item(_ title: String, _ action: Selector?, enabled: Bool = true, symbol: String? = nil) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
         item.isEnabled = enabled && action != nil
+        if let symbol = symbol {
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .regular))
+            image?.size = NSSize(width: 16, height: 16)
+            image?.isTemplate = true
+            item.image = image
+        }
         return item
     }
     // 菜单里的产品标题行：图标 + 粗体名字，左边和普通菜单项的文字对齐
