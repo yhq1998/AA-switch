@@ -268,9 +268,14 @@ sealed class TrayApp : ApplicationContext
                     panel.Controls.Add(drop);
                     break;
                 case ToolStripMenuItem box when Equals(box.Tag, CheckboxTag):
-                    var check = new CheckBox { Text = box.Text, Font = _windowBody, Checked = box.Checked, Size = new Size(width, height), Image = box.Image, TextImageRelation = TextImageRelation.ImageBeforeText, Margin = new Padding(0, 0, 0, gap) };
+                    var preference = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Size = new Size(width, height), Padding = new Padding(gap, 0, gap, 0), Margin = new Padding(0, 0, 0, gap) };
+                    var iconWidth = box.Image is null ? 0 : (int)(16 * scale) + gap;
+                    if (box.Image is not null)
+                        preference.Controls.Add(new PictureBox { Image = box.Image, SizeMode = PictureBoxSizeMode.Zoom, Size = new Size((int)(16 * scale), (int)(16 * scale)), Margin = new Padding(0, (height - (int)(16 * scale)) / 2, gap, 0) });
+                    var check = new CheckBox { Text = box.Text, Font = _windowBody, Checked = box.Checked, Size = new Size(width - gap * 2 - iconWidth, height), TextAlign = ContentAlignment.MiddleLeft, Margin = Padding.Empty };
                     check.CheckedChanged += (_, _) => box.PerformClick();
-                    panel.Controls.Add(check);
+                    preference.Controls.Add(check);
+                    panel.Controls.Add(preference);
                     break;
                 case ToolStripMenuItem link when link.Enabled && link.Font == _small:   // 可点的小字说明（比如“还没配置 API 地址，点击填写…”）
                     var linkLabel = new LinkLabel { Text = link.Text, Font = link.Font, AutoSize = true, MaximumSize = new Size(width, 0), Margin = new Padding(0, 2, 0, 2) };
