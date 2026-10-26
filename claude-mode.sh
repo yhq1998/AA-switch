@@ -44,7 +44,7 @@
 #   （直接给定列表，不问网关，供图形界面把用户确认过的列表写回来）、CLAUDE_MODE_DRY_RUN=1（只打印 models= / current= /
 #   desktop=，什么都不写，供图形界面先弹确认框）。
 set -eu
-CLAUDE_MODE_VERSION="1.4.3"
+CLAUDE_MODE_VERSION="1.4.4"
 
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS="$CLAUDE_HOME/settings.json"
@@ -246,11 +246,19 @@ function run(argv) {
   if (op === 'mode') {
     const mode = readJSON(conf, {}).deploymentMode;
     const m = readJSON(meta, {});
-    let provider = '', url = '';
-    if (m.appliedId) { const g = readJSON(lib + '/' + m.appliedId + '.json', {}); provider = g.inferenceProvider || ''; url = g.inferenceGatewayBaseUrl || ''; }
-    return 'deployment=' + (mode || '') + '\nprovider=' + provider + '\nurl=' + url;
+    let provider = '', url = '', signInDisabled = false;
+    if (m.appliedId) { const g = readJSON(lib + '/' + m.appliedId + '.json', {}); provider = g.inferenceProvider || ''; url = g.inferenceGatewayBaseUrl || ''; signInDisabled = g.disableDeploymentModeChooser === true; }
+    return 'deployment=' + (mode || '') + '\nprovider=' + provider + '\nurl=' + url + '\nsign_in_disabled=' + signInDisabled;
   }
   if (op === 'set-mode') {
+    // 旧配置的这个开关在新版 Claude 中表示禁止 Claude.ai 登录，优先级高于 1p。
+    if (a === '1p') {
+      const m = readJSON(meta, {});
+      if (m.appliedId) {
+        const file = lib + '/' + m.appliedId + '.json', g = readJSON(file, {});
+        if (g.disableDeploymentModeChooser === true) { g.disableDeploymentModeChooser = false; writeJSON(file, g); }
+      }
+    }
     const o = readJSON(conf, {}); o.deploymentMode = a; writeJSON(conf, o); return 'ok';
   }
   if (op === 'sync-trusted') {   // a = 主目录的 claude_desktop_config.json；两边 preferences.localAgentModeTrustedFolders 取并集
@@ -280,6 +288,7 @@ function run(argv) {
     g.inferenceGatewayBaseUrl = a;
     g.inferenceGatewayApiKey = b;
     g.inferenceGatewayAuthScheme = 'bearer';
+    g.disableDeploymentModeChooser = false; // 保留切回 Claude.ai 账号的入口
     // 第三方模式默认只放行推理域名；允许 Cowork / Code 工具访问所有外网域名。
     g.coworkEgressAllowedHosts = ['*'];
     // 名字后面加 [1m]：桌面应用把模型名原样交给 Claude Code，带 [1m] 才按 1M 上下文算（和命令行的默认一样，不管网关支不支持）
@@ -294,7 +303,8 @@ EOF
 desktop_mode() {  # gateway | account | absent
   desktop_installed || { echo absent; return; }
   local info; info="$(desktop_json mode 2>/dev/null || true)"
-  if [ "$(env_field "$info" deployment)" = 3p ] && [ "$(env_field "$info" provider)" = gateway ]; then echo gateway; else echo account; fi
+  # 已保存网关时 Claude 默认进入第三方模式；只有显式 1p 才走账号（模式值可能在欢迎页被清除）。
+  if [ "$(env_field "$info" provider)" = gateway ] && { [ "$(env_field "$info" deployment)" != 1p ] || [ "$(env_field "$info" sign_in_disabled)" = true ]; }; then echo gateway; else echo account; fi
 }
 desktop_running() { pgrep -x "$DESKTOP_APP" >/dev/null 2>&1; }
 desktop_quit() {  # 桌面应用在运行就退出它，DESKTOP_WAS_RUNNING=1；没开着就什么都不做
@@ -307,11 +317,14 @@ desktop_quit() {  # 桌面应用在运行就退出它，DESKTOP_WAS_RUNNING=1；
   if desktop_running; then die "$DESKTOP_APP 没有退出，请手动 ⌘Q 后重新打开。"; fi
   sleep 0.5
 }
-desktop_reopen() {  # 配合 desktop_quit：原来开着才重开；没开着就只改配置，下次打开生效
-  if [ "$DESKTOP_WAS_RUNNING" != 1 ]; then say "${DESKTOP_APP} 没有在运行，下次打开时生效。"; return 0; fi
+desktop_reopen() {  # 可选启动参数；显式账号登录即使原来没开也要打开，否则未登录时 Claude 会清掉 1p 选择
+  if [ "$DESKTOP_WAS_RUNNING" != 1 ] && [ "$#" -eq 0 ]; then say "${DESKTOP_APP} 没有在运行，下次打开时生效。"; return 0; fi
   # 去掉图形界面传给本脚本的变量再打开：open 会把环境带给应用，之后应用里开的终端和会话都会继承（CLAUDE_MODE_MODELS 留着的话，
   # 以后在那里跑 desktop models 就不问网关了）
-  if [ "${CLAUDE_MODE_NO_REOPEN:-}" != 1 ]; then clean_env open -a "$DESKTOP_APP" >/dev/null 2>&1 || say "请手动打开 ${DESKTOP_APP}。"; fi
+  if [ "${CLAUDE_MODE_NO_REOPEN:-}" != 1 ]; then
+    local args=(); [ "$#" -eq 0 ] || args=(--args "$@")
+    clean_env open -a "$DESKTOP_APP" ${args[@]+"${args[@]}"} >/dev/null 2>&1 || say "请手动打开 ${DESKTOP_APP}。"
+  fi
 }
 clean_env() { env -u CLAUDE_MODE_MODELS -u CLAUDE_MODE_DRY_RUN -u CLAUDE_MODE_NONINTERACTIVE -u CLAUDE_MODE_BASE_URL -u CLAUDE_MODE_HEADERS -u CLAUDE_MODE_KEY_STDIN "$@"; }
 desktop_sessions_dir() {  # desktop_sessions_dir <数据目录> [账号 uuid] [组织 uuid]：该 profile 的 Code 会话记录目录；找不到输出空
@@ -510,10 +523,10 @@ mode_desktop_gateway() {
   url="$(conf_get desktop_base_url)"; url="${url:-${BASE_URL%/}}"   # 不带 /v1：桌面应用把地址交给 Claude Code 引擎，引擎自己加 /v1/messages
   models="$(conf_get desktop_models)"; models="${models:-$DESKTOP_MODELS_DEFAULT}"
   backup_desktop
+  desktop_quit   # 先退出再写：应用退出时可能把内存里的旧配置写回磁盘
   desktop_json write-gateway "$url" "$key" "$models" >/dev/null || die "写入桌面应用的网关配置失败。"
   chmod 600 "$DESKTOP_LIB"/*.json 2>/dev/null || true   # 里面有 key
   desktop_json set-mode 3p >/dev/null || die "写入 ${DESKTOP_CONF} 失败。"
-  desktop_quit   # 先退出再同步：应用开着时会话文件可能正写到一半
   desktop_sync_sessions
   desktop_sync_cowork
   say "已把 ${DESKTOP_APP} 切到网关模式（${url}，模型：${models}）。"
@@ -522,12 +535,12 @@ mode_desktop_gateway() {
 mode_desktop_account() {
   desktop_installed || die "这台电脑上没有找到 ${DESKTOP_APP}.app。"
   backup_desktop
+  desktop_quit   # 退出后再写 1p，避免被旧配置覆盖；同时确保会话写入已经结束
   desktop_json set-mode 1p >/dev/null || die "写入 ${DESKTOP_CONF} 失败。"
-  desktop_quit   # 先退出再同步：应用开着时会话文件可能正写到一半
   desktop_sync_sessions
   desktop_sync_cowork
   say "已把 ${DESKTOP_APP} 切回账号模式。"
-  desktop_reopen
+  desktop_reopen --claude-first-party-sign-in
 }
 
 # ---------- 桌面应用能选的模型列表 ----------
