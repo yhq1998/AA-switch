@@ -142,7 +142,7 @@ public sealed class ClaudeDesktopTests : IDisposable
         Directory.CreateDirectory(dp.InstallerDir);
         var exe = Path.Combine(dp.InstallerDir, "claude.exe");
         // A real executable records what the Windows launcher passes to the installed app.
-        const string source = "using System; using System.IO; public class Probe { public static void Main(string[] args) { File.WriteAllLines(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, \"args.txt\"), args); } }";
+        const string source = "using System; using System.IO; using System.Diagnostics; public class Probe { public static void Main(string[] args) { File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, \"pid.txt\"), Process.GetCurrentProcess().Id.ToString()); File.WriteAllLines(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, \"args.txt\"), args); } }";
         var compile = new ProcessStartInfo("powershell.exe") { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true };
         foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", "Add-Type -TypeDefinition '" + source + "' -OutputAssembly '" + exe.Replace("'", "''") + "' -OutputType ConsoleApplication" })
             compile.ArgumentList.Add(arg);
@@ -152,6 +152,13 @@ public sealed class ClaudeDesktopTests : IDisposable
         new WindowsDesktopApp(dp).OpenForAccountSignIn();
         var output = Path.Combine(dp.InstallerDir, "args.txt");
         Assert.True(SpinWait.SpinUntil(() => File.Exists(output) && new FileInfo(output).Length > 0, TimeSpan.FromSeconds(10)));
+        var pid = int.Parse(File.ReadAllText(Path.Combine(dp.InstallerDir, "pid.txt")));
+        try
+        {
+            using var probe = Process.GetProcessById(pid);
+            Assert.True(probe.WaitForExit(10000));
+        }
+        catch (ArgumentException) { } // Probe already exited before its process handle was acquired.
         Assert.Equal(new[] { "--claude-first-party-sign-in" }, File.ReadAllLines(output));
     }
 
