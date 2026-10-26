@@ -27,13 +27,37 @@ static class ActionImages
     {
         for (var y = 4; y <= 12; y += 4) { g.DrawEllipse(p, 2, y - 1, 1, 1); g.DrawLine(p, 6, y, 14, y); }
     });
+    public static readonly Image Status = Draw((g, p) =>
+    {
+        g.DrawArc(p, 3, 3, 10, 10, 40, 290);
+        g.DrawLines(p, [new PointF(10, 2), new PointF(13, 3.5f), new PointF(12, 7)]);
+    }, Color.RoyalBlue);
+    public static readonly Image Update = Draw((g, p) =>
+    {
+        g.DrawEllipse(p, 2, 2, 12, 12);
+        g.DrawLine(p, 8, 4, 8, 11);
+        g.DrawLines(p, [new PointF(5, 8), new PointF(8, 11), new PointF(11, 8)]);
+    }, Color.ForestGreen);
+    public static readonly Image Diagnostics = Draw((g, p) =>
+    {
+        g.DrawRectangle(p, 3, 2, 8, 11);
+        g.DrawLine(p, 5, 5, 9, 5);
+        g.DrawLine(p, 5, 8, 8, 8);
+        g.DrawEllipse(p, 8, 8, 5, 5);
+        g.DrawLine(p, 12, 12, 15, 15);
+    }, Color.MediumPurple);
+    public static readonly Image Startup = Draw((g, p) =>
+    {
+        g.DrawArc(p, 2, 2, 12, 12, -60, 300);
+        g.DrawLine(p, 8, 1, 8, 8);
+    }, Color.Teal);
 
-    static Image Draw(Action<Graphics, Pen> draw)
+    static Image Draw(Action<Graphics, Pen> draw, Color? color = null)
     {
         var image = new Bitmap(16, 16);
         using var g = Graphics.FromImage(image);
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        using var pen = new Pen(SystemColors.MenuText, 1.3f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+        using var pen = new Pen(color ?? SystemColors.MenuText, 1.3f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
         draw(g, pen);
         return image;
     }

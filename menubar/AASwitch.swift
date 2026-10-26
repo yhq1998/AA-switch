@@ -36,13 +36,12 @@ final class SegmentRow: NSView {
     private let enabled: Bool
     private let onSelect: (Int) -> Void
     private var rects: [NSRect] = []
-    init(labels: [String], selected: Int?, enabled: Bool, segmentWidth: CGFloat, inset: CGFloat = 14, onSelect: @escaping (Int) -> Void) {
+    init(labels: [String], selected: Int?, enabled: Bool, segmentWidth: CGFloat, inset: CGFloat = 14, height: CGFloat = 24, onSelect: @escaping (Int) -> Void) {
         self.labels = labels
         self.selected = selected
         self.enabled = enabled
         self.onSelect = onSelect
         super.init(frame: .zero)
-        let height: CGFloat = 24
         var x = inset   // 菜单里 14：和普通菜单项的文字左对齐；窗口里 0
         for _ in labels { rects.append(NSRect(x: x, y: 4, width: segmentWidth, height: height)); x += segmentWidth }
         frame = NSRect(x: 0, y: 0, width: x + inset, height: height + 8)
@@ -594,20 +593,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         w.setContentSize(content.fittingSize)
         if w.isVisible { w.setFrameTopLeftPoint(NSPoint(x: w.frame.minX, y: top)) }   // 内容变高变矮时顶边不动
     }
-    // 菜单项 → 窗口里的控件：不可点的项变文字，可点的变按钮（连着的几个排成一行），带勾的变复选框，子菜单变下拉按钮，分隔线照搬
+    // 菜单项 → 窗口里的控件：操作按钮逐项竖排，底部关闭 / 退出同排，带勾的变复选框，子菜单变下拉按钮。
     private func windowContent(from items: NSMenu) -> NSView {
         let width: CGFloat = 430
+        let controlHeight: CGFloat = 32
+        let bodyFont = NSFont.systemFont(ofSize: 13)
+        let captionFont = NSFont.systemFont(ofSize: 11)
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 6
-        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 18, right: 16)
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         stack.widthAnchor.constraint(equalToConstant: width + 32).isActive = true
         var buttonRow: NSStackView?
         func button(_ i: NSMenuItem) -> NSButton {
             let b = NSButton(title: i.title, target: i.target, action: i.action)
             b.bezelStyle = .rounded
+            b.controlSize = .large
+            b.font = bodyFont
             b.isEnabled = i.isEnabled
+            b.image = i.image
+            b.imagePosition = .imageLeading
+            b.heightAnchor.constraint(equalToConstant: controlHeight).isActive = true
             return b
         }
         for i in items.items {
@@ -630,15 +637,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             } else if let sub = i.submenu {
                 let pop = NSPopUpButton(frame: .zero, pullsDown: true)
                 let copy = sub.copy() as! NSMenu
-                copy.insertItem(withTitle: i.title + "…", action: nil, keyEquivalent: "", at: 0)   // 下拉按钮拿第一项当按钮文字
+                copy.insertItem(withTitle: i.title, action: nil, keyEquivalent: "", at: 0)
                 pop.menu = copy
-                pop.controlSize = .small
+                pop.controlSize = .large
+                pop.font = bodyFont
+                pop.bezelStyle = .rounded
+                pop.widthAnchor.constraint(equalToConstant: width).isActive = true
+                pop.heightAnchor.constraint(equalToConstant: controlHeight).isActive = true
                 stack.addArrangedSubview(pop)
             } else if i.action != nil && i.state == .on || i.action == #selector(toggleLogin) {
                 let box = NSButton(checkboxWithTitle: i.title, target: i.target, action: i.action)
                 box.state = i.state
-                stack.addArrangedSubview(box)
+                box.font = bodyFont
+                let row = NSStackView()
+                row.orientation = .horizontal
+                row.alignment = .centerY
+                row.spacing = 8
+                row.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+                row.widthAnchor.constraint(equalToConstant: width).isActive = true
+                row.heightAnchor.constraint(equalToConstant: controlHeight).isActive = true
+                if let image = i.image {
+                    let icon = NSImageView(image: image)
+                    icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+                    icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
+                    row.addArrangedSubview(icon)
+                }
+                row.addArrangedSubview(box)
+                let spacer = NSView()
+                spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                row.addArrangedSubview(spacer)
+                stack.addArrangedSubview(row)
             } else if isPlainButton {
+                if i.action != #selector(closeWindow) && i.action != #selector(quit) {
+                    buttonRow = nil
+                    let action = button(i)
+                    action.alignment = .left
+                    action.widthAnchor.constraint(equalToConstant: width).isActive = true
+                    stack.addArrangedSubview(action)
+                    continue
+                }
                 if buttonRow == nil {
                     let row = NSStackView()
                     row.orientation = .horizontal
@@ -646,16 +683,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                     stack.addArrangedSubview(row)
                     buttonRow = row
                 }
-                buttonRow?.addArrangedSubview(button(i))
+                let footerButton = button(i)
+                footerButton.widthAnchor.constraint(equalToConstant: (width - 8) / 2).isActive = true
+                buttonRow?.addArrangedSubview(footerButton)
                 if i.action == #selector(closeWindow) {
                     buttonRow?.widthAnchor.constraint(equalToConstant: width).isActive = true
-                    let spacer = NSView()
-                    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-                    buttonRow?.addArrangedSubview(spacer)
                 }
             } else {
                 let text = i.attributedTitle.map { NSMutableAttributedString(attributedString: $0) } ?? NSMutableAttributedString(
-                    string: i.title, attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                    string: i.title, attributes: [.font: i.title.hasPrefix(appName + " ") ? captionFont : bodyFont,
                                                   .foregroundColor: i.isEnabled ? NSColor.labelColor : NSColor.secondaryLabelColor])
                 let label = NSTextField(wrappingLabelWithString: "")
                 label.attributedStringValue = text
@@ -664,8 +700,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 var view: NSView = label
                 if let image = i.image {
                     let icon = NSImageView(image: image)
-                    view = NSStackView(views: [icon, label])
-                    stack.setCustomSpacing(8, after: stack.arrangedSubviews.last ?? label)
+                    icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+                    icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
+                    let row = NSStackView(views: [icon, label])
+                    row.spacing = 8
+                    view = row
                 }
                 if i.action != nil {   // 可点的说明行（比如“还没配置 API 地址，点击填写…”）
                     let link = NSButton(title: "", target: i.target, action: i.action)
@@ -1351,11 +1390,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         menu.addItem(.separator())
         renderSection(claude, toApi: #selector(claudeToApi), configure: #selector(configureClaude), backups: #selector(openClaudeBackups))
         menu.addItem(.separator())
-        add("Claude 环境检测…", #selector(checkClaudeAccountEnvironment), enabled: !busy)
-        add("刷新状态", #selector(refresh), enabled: !busy)
-        add("检查更新", #selector(checkUpdateManually), enabled: !busy)
-        add("导出诊断信息…", #selector(exportDiagnostics), enabled: !busy)
-        let login = add("开机自动启动", #selector(toggleLogin))
+        add("Claude 环境检测", #selector(checkClaudeAccountEnvironment), enabled: !busy, symbol: "checkmark.shield.fill", color: .systemOrange)
+        add("刷新状态", #selector(refresh), enabled: !busy, symbol: "arrow.clockwise", color: .systemBlue)
+        add("检查更新", #selector(checkUpdateManually), enabled: !busy, symbol: "arrow.down.circle.fill", color: .systemGreen)
+        add("导出诊断信息", #selector(exportDiagnostics), enabled: !busy, symbol: "doc.text.magnifyingglass", color: .systemPurple)
+        let login = add("开机自动启动", #selector(toggleLogin), symbol: "power.circle.fill", color: .systemTeal)
         login.state = loginEnabled ? .on : .off
         menu.addItem(.separator())
         if busy && busyProduct.isEmpty {
@@ -1413,7 +1452,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             add(busyText, enabled: false)
         } else {
             let row = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            row.view = SegmentRow(labels: [p.accountTitle, "API"], selected: selected, enabled: !busy, segmentWidth: segmentWidth, inset: building === self.menu ? 14 : 0) { [weak self] i in
+            let forWindow = building !== self.menu
+            row.view = SegmentRow(labels: [p.accountTitle, "API"], selected: selected, enabled: !busy, segmentWidth: forWindow ? 215 : segmentWidth, inset: forWindow ? 0 : 14, height: forWindow ? 32 : 24) { [weak self] i in
                 guard let self = self else { return }
                 let on = i == 1
                 self.menu.cancelTracking()
@@ -1478,15 +1518,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         moreItem.submenu = more
         menu.addItem(moreItem)
     }
-    private func item(_ title: String, _ action: Selector?, enabled: Bool = true, symbol: String? = nil) -> NSMenuItem {
+    private func item(_ title: String, _ action: Selector?, enabled: Bool = true, symbol: String? = nil, color: NSColor? = nil) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
         item.isEnabled = enabled && action != nil
         if let symbol = symbol {
-            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .regular))
+            var configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+            if let color = color {
+                let colors: [NSColor] = symbol.hasSuffix(".fill") ? [.white, color] : [color]
+                configuration = configuration.applying(NSImage.SymbolConfiguration(paletteColors: colors))
+            }
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?.withSymbolConfiguration(configuration)
             image?.size = NSSize(width: 16, height: 16)
-            image?.isTemplate = true
+            image?.isTemplate = color == nil
             item.image = image
             if #available(macOS 27.0, *) { item.preferredImageVisibility = .visible }
         }
@@ -1514,8 +1558,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         return stack
     }
     @discardableResult
-    private func add(_ title: String, _ action: Selector? = nil, enabled: Bool = true) -> NSMenuItem {
-        let i = item(title, action, enabled: enabled)
+    private func add(_ title: String, _ action: Selector? = nil, enabled: Bool = true, symbol: String? = nil, color: NSColor? = nil) -> NSMenuItem {
+        let i = item(title, action, enabled: enabled, symbol: symbol, color: color)
         building.addItem(i)
         return i
     }

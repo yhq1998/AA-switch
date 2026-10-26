@@ -12,13 +12,16 @@ namespace AASwitch.Tray;
 sealed class TrayApp : ApplicationContext
 {
     readonly NotifyIcon _icon;
-    readonly ContextMenuStrip _menu = new() { ShowImageMargin = false, ShowCheckMargin = true };
+    readonly ContextMenuStrip _menu = new() { ShowImageMargin = true, ShowCheckMargin = true };
     readonly Control _ui = new();   // 用来把后台线程的结果送回界面线程
     readonly List<IProduct> _products;
     readonly List<string> _said = [];   // Core 在一次操作里说的话，成功后挑最后一句做气泡提示
     readonly Dictionary<string, string> _mode = [];
     readonly Dictionary<string, List<string>> _status = [];
     readonly Font _small, _bold;
+    readonly Font _windowBody = new(SystemFonts.MessageBoxFont?.FontFamily ?? FontFamily.GenericSansSerif, 10f);
+    readonly Font _windowCaption = new(SystemFonts.MessageBoxFont?.FontFamily ?? FontFamily.GenericSansSerif, 8.5f);
+    readonly Font _windowHeading = new(SystemFonts.MessageBoxFont?.FontFamily ?? FontFamily.GenericSansSerif, 10f, FontStyle.Bold);
     bool _busy;
     string _busyProduct = "", _busyText = "";
     bool _onboardingShown;
@@ -167,10 +170,17 @@ sealed class TrayApp : ApplicationContext
             items.Add(new ToolStripSeparator());
         }
         foreach (var p in _products) { AddSection(items, p); items.Add(new ToolStripSeparator()); }
-        items.Add(Item("刷新状态", () => { ReadModes(); Rebuild(); RefreshStatusAsync(); }, !_busy));
-        items.Add(Item("检查更新", () => _ = CheckUpdateManuallyAsync(), !_busy));
-        items.Add(Item("导出诊断信息…", ExportDiagnostics, !_busy));
+        var refresh = Item("刷新状态", () => { ReadModes(); Rebuild(); RefreshStatusAsync(); }, !_busy);
+        refresh.Image = ActionImages.Status;
+        items.Add(refresh);
+        var update = Item("检查更新", () => _ = CheckUpdateManuallyAsync(), !_busy);
+        update.Image = ActionImages.Update;
+        items.Add(update);
+        var diagnostics = Item("导出诊断信息", ExportDiagnostics, !_busy);
+        diagnostics.Image = ActionImages.Diagnostics;
+        items.Add(diagnostics);
         var login = Item("开机自动启动", () => { Autostart.Enabled = !Autostart.Enabled; Log.Write("开机自动启动：" + Autostart.Enabled); Rebuild(); });
+        login.Image = ActionImages.Startup;
         login.Checked = Autostart.Enabled;
         login.Tag = CheckboxTag;
         items.Add(login);
@@ -191,7 +201,7 @@ sealed class TrayApp : ApplicationContext
         {
             _window = new Form
             {
-                Text = AppInfo.Name, Icon = AppInfo.LoadIcon("app.ico", 32), Font = _menu.Font,
+                Text = AppInfo.Name, Icon = AppInfo.LoadIcon("app.ico", 32), Font = _windowBody,
                 FormBorderStyle = FormBorderStyle.FixedSingle, MaximizeBox = false, StartPosition = FormStartPosition.CenterScreen,
                 AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ShowInTaskbar = true, BackColor = SystemColors.Window,
             };
@@ -222,12 +232,14 @@ sealed class TrayApp : ApplicationContext
         _windowItems = items;
     }
 
-    /// <summary>菜单项 → 窗口里的控件：文字项变标签，可点的变按钮（连着的几个排成一行），带勾的变复选框，
+    /// <summary>菜单项 → 窗口里的控件：文字项变标签，操作按钮逐项竖排，底部关闭 / 退出同排，带勾的变复选框，
     /// 子菜单变“更多 ▾”按钮（点了弹出同一个子菜单），开关控件直接挪过来，分隔线照搬。</summary>
     Control WindowContent(ContextMenuStrip items)
     {
         var scale = _menu.DeviceDpi / 96f;
         var width = (int)(460 * scale);
+        var height = (int)(32 * scale);
+        var gap = (int)(8 * scale);
         var panel = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding((int)(16 * scale)) };
         FlowLayoutPanel? buttonRow = null;
         foreach (ToolStripItem i in items.Items.Cast<ToolStripItem>().ToList())
@@ -242,19 +254,21 @@ sealed class TrayApp : ApplicationContext
                     break;
                 case ToolStripControlHost host:
                     var control = host.Control;
+                    control.Font = _windowBody;
+                    control.Size = new Size(width, height);
                     control.Margin = new Padding(0, (int)(4 * scale), 0, (int)(4 * scale));
                     panel.Controls.Add(control);   // 从菜单项上挪过来；原来的菜单项跟着 _windowItems 一起释放
                     break;
                 case ToolStripLabel label:
-                    panel.Controls.Add(new Label { Text = label.Text, Font = label.Font, ForeColor = label.ForeColor, AutoSize = true, MaximumSize = new Size(width, 0), UseMnemonic = false, Margin = new Padding(0, 2, 0, 2) });
+                    panel.Controls.Add(new Label { Text = label.Text, Font = label.Font.Bold ? _windowHeading : label.Font == _small ? _windowCaption : _windowBody, ForeColor = label.ForeColor, AutoSize = true, MaximumSize = new Size(width, 0), UseMnemonic = false, Margin = new Padding(0, 2, 0, gap) });
                     break;
                 case ToolStripMenuItem { DropDownItems.Count: > 0 } more:
-                    var drop = new Button { Text = more.Text + " ▾", AutoSize = true, FlatStyle = FlatStyle.System };
+                    var drop = new Button { Text = more.Text + " ▾", Font = _windowBody, Size = new Size(width, height), FlatStyle = FlatStyle.Standard, Margin = new Padding(0, 0, 0, gap) };
                     drop.Click += (_, _) => more.DropDown.Show(drop, new Point(0, drop.Height));
                     panel.Controls.Add(drop);
                     break;
                 case ToolStripMenuItem box when Equals(box.Tag, CheckboxTag):
-                    var check = new CheckBox { Text = box.Text, Checked = box.Checked, AutoSize = true, Margin = new Padding(0, (int)(4 * scale), 0, 0) };
+                    var check = new CheckBox { Text = box.Text, Font = _windowBody, Checked = box.Checked, Size = new Size(width, height), Image = box.Image, TextImageRelation = TextImageRelation.ImageBeforeText, Margin = new Padding(0, 0, 0, gap) };
                     check.CheckedChanged += (_, _) => box.PerformClick();
                     panel.Controls.Add(check);
                     break;
@@ -264,23 +278,23 @@ sealed class TrayApp : ApplicationContext
                     panel.Controls.Add(linkLabel);
                     break;
                 case ToolStripMenuItem action when isButton:
+                    var button = new Button { Text = action.Text, Font = _windowBody, Size = new Size(width, height), FlatStyle = FlatStyle.Standard, Image = action.Image, TextImageRelation = TextImageRelation.ImageBeforeText, Margin = new Padding(0, 0, 0, gap) };
+                    button.Click += (_, _) => action.PerformClick();
+                    if (action.Text is not ("关闭窗口" or "退出"))
+                    {
+                        buttonRow = null;
+                        button.TextAlign = ContentAlignment.MiddleLeft;
+                        button.ImageAlign = ContentAlignment.MiddleLeft;
+                        panel.Controls.Add(button);
+                        break;
+                    }
                     if (buttonRow is null)
                     {
-                        buttonRow = new FlowLayoutPanel { AutoSize = true, WrapContents = true, MaximumSize = new Size(width, 0), Margin = new Padding(0, 2, 0, 2) };
+                        buttonRow = new FlowLayoutPanel { AutoSize = false, WrapContents = false, Size = new Size(width, height), Margin = Padding.Empty };
                         panel.Controls.Add(buttonRow);
                     }
-                    var button = new Button { Text = action.Text, AutoSize = true, FlatStyle = FlatStyle.System, Margin = new Padding(0, 0, (int)(8 * scale), 0) };
-                    button.Click += (_, _) => action.PerformClick();
-                    if (action.Text == "关闭窗口")
-                    {
-                        buttonRow!.AutoSize = false;
-                        buttonRow.Width = width;
-                        buttonRow.Height = button.PreferredSize.Height;
-                        var quit = items.Items.OfType<ToolStripMenuItem>().Single(x => x.Text == "退出");
-                        using var quitProbe = new Button { Text = quit.Text, AutoSize = true };
-                        var quitWidth = quitProbe.PreferredSize.Width;
-                        button.Margin = new Padding(0, 0, Math.Max(8, width - button.PreferredSize.Width - quitWidth - (int)(8 * scale)), 0);
-                    }
+                    button.Width = (width - gap) / 2;
+                    button.Margin = new Padding(0, 0, action.Text == "关闭窗口" ? gap : 0, 0);
                     buttonRow.Controls.Add(button);
                     break;
                 case ToolStripMenuItem text:   // 不可点的：正在切换…、详细信息
@@ -595,7 +609,7 @@ sealed class TrayApp : ApplicationContext
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { _window?.Dispose(); _windowItems?.Dispose(); _updateTimer.Dispose(); _icon.Dispose(); _menu.Dispose(); _ui.Dispose(); _small.Dispose(); _bold.Dispose(); }
+        if (disposing) { _window?.Dispose(); _windowItems?.Dispose(); _updateTimer.Dispose(); _icon.Dispose(); _menu.Dispose(); _ui.Dispose(); _small.Dispose(); _bold.Dispose(); _windowBody.Dispose(); _windowCaption.Dispose(); _windowHeading.Dispose(); }
         base.Dispose(disposing);
     }
 
