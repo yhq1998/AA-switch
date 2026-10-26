@@ -101,6 +101,19 @@ jobs:
           if (-not (Select-String -Path $log -Pattern "显示窗口" -Quiet)) { Fail "window not shown" }
           Shot "window"
 
+          # Closing the main window must keep the tray process alive, just like macOS.
+          Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+          $root = [System.Windows.Automation.AutomationElement]::RootElement
+          $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $p.Id)
+          $window = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $condition)
+          if ($null -eq $window) { Fail "main window not found by UI Automation" }
+          $closeCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, '关闭窗口')
+          $close = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $closeCondition)
+          if ($null -eq $close) { Fail "close-window button missing" }
+          $close.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+          Start-Sleep -Seconds 1
+          if ($p.HasExited) { Fail "close-window button quit the tray process" }
+
           $q = Start-Process -FilePath $exe -PassThru -Wait
           Start-Sleep -Seconds 2
           if (-not (Select-String -Path $log -Pattern "另一份程序被打开" -Quiet)) { Fail "second launch did not reveal the running one" }

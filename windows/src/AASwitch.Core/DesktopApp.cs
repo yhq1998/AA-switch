@@ -12,6 +12,7 @@ public interface IDesktopApp
     /// <summary>退出应用，退不掉抛 SwitchException。</summary>
     void Quit();
     void Open();
+    void OpenForAccountSignIn();
 }
 
 /// <summary>
@@ -114,5 +115,36 @@ public sealed class WindowsDesktopApp(ClaudeDesktopPaths dp) : IDesktopApp
         var exe = Path.Combine(dp.InstallerDir, "claude.exe");
         if (!File.Exists(exe)) throw new SwitchException("找不到 Claude 桌面应用的程序。");
         Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true })?.Dispose();
+    }
+
+    public void OpenForAccountSignIn()
+    {
+        const string args = "--claude-first-party-sign-in";
+        if (dp.PackageFamily is { } pfn)
+        {
+            // Explorer's shell:AppsFolder launch does not forward application arguments.
+            // Use the Windows activation API so the Store app receives the explicit sign-in intent.
+            if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+            var manager = (IApplicationActivationManager)new ApplicationActivationManager();
+            try { Marshal.ThrowExceptionForHR(manager.ActivateApplication(pfn + "!Claude", args, 0, out _)); }
+            finally { Marshal.ReleaseComObject(manager); }
+            return;
+        }
+        var exe = Path.Combine(dp.InstallerDir, "claude.exe");
+        if (!File.Exists(exe)) throw new SwitchException("找不到 Claude 桌面应用的程序。");
+        var start = new ProcessStartInfo(exe) { UseShellExecute = false };
+        start.ArgumentList.Add(args);
+        Process.Start(start)?.Dispose();
+    }
+
+    [ComImport, Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")]
+    class ApplicationActivationManager { }
+
+    [ComImport, Guid("2E941141-7F97-4756-BA1D-9DECDE894A3D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IApplicationActivationManager
+    {
+        [PreserveSig]
+        int ActivateApplication([MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
+                                [MarshalAs(UnmanagedType.LPWStr)] string arguments, uint options, out uint processId);
     }
 }

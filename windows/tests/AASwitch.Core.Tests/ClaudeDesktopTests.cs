@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Diagnostics;
 using AASwitch.Core;
 
 namespace AASwitch.Core.Tests;
@@ -29,9 +30,11 @@ public sealed class ClaudeDesktopTests : IDisposable
     {
         public bool IsRunning;
         public List<string> Calls = [];
+        public Action? OnQuit;
         public bool Running() => IsRunning;
-        public void Quit() { Calls.Add("quit"); IsRunning = false; }
+        public void Quit() { Calls.Add("quit"); OnQuit?.Invoke(); IsRunning = false; }
         public void Open() { Calls.Add("open"); IsRunning = true; }
+        public void OpenForAccountSignIn() { Calls.Add("open-account"); IsRunning = true; }
     }
 
     ClaudeDesktopPaths Dp => ClaudeDesktopPaths.Discover(_local, _roaming);
@@ -73,6 +76,107 @@ public sealed class ClaudeDesktopTests : IDisposable
     }
 
     // ---------- 模式和网关配置 ----------
+    void SeedGateway(string? mode, bool disableSignIn = false)
+    {
+        var cfg = new JsonObject { ["other"] = 1 };
+        if (mode is not null) cfg["deploymentMode"] = mode;
+        Write(Path.Combine(Gateway3p, "claude_desktop_config.json"), cfg.ToJsonString());
+        var lib = Path.Combine(Gateway3p, "configLibrary");
+        Write(Path.Combine(lib, "_meta.json"), """{"appliedId":"fixture","entries":[{"id":"fixture","name":"Mine"}]}""");
+        Write(Path.Combine(lib, "fixture.json"), new JsonObject {
+            ["inferenceProvider"] = "gateway", ["inferenceGatewayApiKey"] = "fixture-key",
+            ["inferenceGatewayBaseUrl"] = "https://gateway.example.test", ["disableDeploymentModeChooser"] = disableSignIn,
+        }.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData(null, false, "gateway")]
+    [InlineData("", false, "gateway")]
+    [InlineData("3p", false, "gateway")]
+    [InlineData("1p", false, "account")]
+    [InlineData("1p", true, "gateway")]
+    public void Saved_gateway_uses_actual_Claude_mode_rules(string? mode, bool disabled, string expected)
+    {
+        SeedGateway(mode, disabled);
+        Assert.Equal(expected, New().ModeWord());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Account_switch_restores_sign_in_and_opens_explicit_login(bool running)
+    {
+        SeedGateway("3p", true);
+        _app.IsRunning = running;
+        _app.OnQuit = () => Write(Path.Combine(Gateway3p, "claude_desktop_config.json"), """{"deploymentMode":"3p","other":1}""");
+        New().SwitchToAccount();
+        var cfg = Read(Path.Combine(Gateway3p, "claude_desktop_config.json"));
+        Assert.Equal("1p", (string)cfg["deploymentMode"]!);
+        Assert.Equal(1, (int)cfg["other"]!);
+        var entry = Read(Path.Combine(Gateway3p, "configLibrary", "fixture.json"));
+        Assert.False((bool)entry["disableDeploymentModeChooser"]!);
+        Assert.Equal("fixture-key", (string)entry["inferenceGatewayApiKey"]!);
+        Assert.Equal("account", New().ModeWord());
+        Assert.Equal(running ? ["quit", "open-account"] : new[] { "open-account" }, _app.Calls);
+        var backups = Directory.GetDirectories(_paths.ClaudeBackups);
+        var saved = Read(Path.Combine(backups.Single(), "desktop", "configLibrary", "fixture.json"));
+        Assert.True((bool)saved["disableDeploymentModeChooser"]!);
+    }
+
+    [Fact]
+    public void Gateway_switch_keeps_account_sign_in_available()
+    {
+        SeedGateway("1p", true);
+        New().SwitchToGateway("https://gateway.example.test", "new-fixture-key");
+        var entry = Read(Path.Combine(Gateway3p, "configLibrary", "fixture.json"));
+        Assert.False((bool)entry["disableDeploymentModeChooser"]!);
+        Assert.Equal("gateway", New().ModeWord());
+        Assert.Empty(_app.Calls);
+    }
+
+    [Fact]
+    public void Windows_installer_receives_explicit_account_sign_in_argument()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var dp = Dp with { PackageDir = null };
+        Directory.CreateDirectory(dp.InstallerDir);
+        var exe = Path.Combine(dp.InstallerDir, "claude.exe");
+        // A real executable records what the Windows launcher passes to the installed app.
+        const string source = "using System; using System.IO; public class Probe { public static void Main(string[] args) { File.WriteAllLines(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, \"args.txt\"), args); } }";
+        var compile = new ProcessStartInfo("powershell.exe") { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true };
+        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", "Add-Type -TypeDefinition '" + source + "' -OutputAssembly '" + exe.Replace("'", "''") + "' -OutputType ConsoleApplication" })
+            compile.ArgumentList.Add(arg);
+        using var compiler = Process.Start(compile)!;
+        Assert.True(compiler.WaitForExit(30000));
+        Assert.True(compiler.ExitCode == 0, compiler.StandardError.ReadToEnd());
+        new WindowsDesktopApp(dp).OpenForAccountSignIn();
+        var output = Path.Combine(dp.InstallerDir, "args.txt");
+        Assert.True(SpinWait.SpinUntil(() => File.Exists(output) && new FileInfo(output).Length > 0, TimeSpan.FromSeconds(10)));
+        Assert.Equal(new[] { "--claude-first-party-sign-in" }, File.ReadAllLines(output));
+    }
+
+    [Theory]
+    [InlineData("1p", false)]
+    [InlineData("3p", true)]
+    public void Model_update_applies_immediately_only_in_gateway_mode(string mode, bool restart)
+    {
+        SeedGateway(mode);
+        _app.IsRunning = true;
+        var d = New();
+        var models = new[] { "claude-opus-5-5", "claude-sonnet-5" };
+        d.UpdateModels(models, "https://gateway.example.test", "fixture-key");
+        Assert.Equal(models, d.Models());
+        Assert.Equal(restart ? new[] { "quit", "open" } : Array.Empty<string>(), _app.Calls);
+        if (restart)
+            Assert.Equal("claude-opus-5-5[1m]", (string)Read(Path.Combine(Gateway3p, "configLibrary", "fixture.json"))["inferenceModels"]![0]!);
+        var before = File.ReadAllText(_paths.ClaudeConf);
+        Assert.Throws<SwitchException>(() => d.UpdateModels(["bad name"], "https://gateway.example.test", "fixture-key"));
+        Assert.Equal(before, File.ReadAllText(_paths.ClaudeConf));
+        _app.Calls.Clear();
+        d.UpdateModels(models, "https://gateway.example.test", "fixture-key");
+        Assert.Empty(_app.Calls);
+    }
+
     [Fact]
     public void Gateway_then_account_writes_config_and_restarts_app()
     {

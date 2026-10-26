@@ -9,7 +9,7 @@ namespace AASwitch.Core;
 ///   %LOCALAPPDATA%\Claude-3p\claude_desktop_config.json 的 deploymentMode（1p 账号，3p 网关），启动时生效；
 ///   网关地址、key、模型列表在同目录的 configLibrary\&lt;id&gt;.json，_meta.json 的 appliedId 指向在用的那份。
 /// 两种模式的数据目录是分开的（账号模式在应用商店版的 LocalCache\Roaming\Claude），所以切换时把两边的 Code 会话列表互相补齐、
-/// Cowork 会话互相同步（见 DesktopSessions）。改之前先备份，改完退出并重新打开应用（原来没开着就等下次打开生效）。
+/// Cowork 会话互相同步（见 DesktopSessions）。先备份、退出，再写配置；账号切换使用明确的登录入口打开应用。
 /// </summary>
 public sealed class ClaudeDesktop(ClaudeDesktopPaths dp, AppPaths paths, IDesktopApp app, Action<string> say)
 {
@@ -25,7 +25,7 @@ public sealed class ClaudeDesktop(ClaudeDesktopPaths dp, AppPaths paths, IDeskto
     string Library => Path.Combine(dp.GatewayDir, "configLibrary");
     string Meta => Path.Combine(Library, "_meta.json");
 
-    public sealed record GatewayState(string Deployment, string Provider, string Url);
+    public sealed record GatewayState(string Deployment, string Provider, string Url, bool SignInDisabled = false);
 
     public GatewayState ReadGateway()
     {
@@ -33,14 +33,15 @@ public sealed class ClaudeDesktop(ClaudeDesktopPaths dp, AppPaths paths, IDeskto
         var id = JsonFile.String(JsonFile.ReadObject(Meta)["appliedId"]) ?? "";
         if (!SafeId(id)) return new(deployment, "", "");
         var g = JsonFile.ReadObject(Path.Combine(Library, id + ".json"));
-        return new(deployment, JsonFile.String(g["inferenceProvider"]) ?? "", JsonFile.String(g["inferenceGatewayBaseUrl"]) ?? "");
+        return new(deployment, JsonFile.String(g["inferenceProvider"]) ?? "", JsonFile.String(g["inferenceGatewayBaseUrl"]) ?? "",
+                   g["disableDeploymentModeChooser"] is JsonValue v && v.TryGetValue<bool>(out var disabled) && disabled);
     }
 
     /// <summary>gateway / account / absent。</summary>
     public string ModeWord()
     {
         if (!Installed) return "absent";
-        try { var s = ReadGateway(); return s.Deployment == "3p" && s.Provider == "gateway" ? "gateway" : "account"; }
+        try { var s = ReadGateway(); return s.Provider == "gateway" && (s.Deployment != "1p" || s.SignInDisabled) ? "gateway" : "account"; }
         catch (SwitchException) { return "account"; }
     }
 
@@ -49,6 +50,17 @@ public sealed class ClaudeDesktop(ClaudeDesktopPaths dp, AppPaths paths, IDeskto
         var raw = _conf.Get("desktop_models");
         var list = (raw.Length > 0 ? raw : DefaultModels).Split(',').Select(m => m.Trim()).Where(m => m.Length > 0).ToList();
         return list.Count > 0 ? list : [.. DefaultModels.Split(',')];
+    }
+
+    public void UpdateModels(IEnumerable<string> models, string baseUrl, string key)
+    {
+        if (!Installed) throw new SwitchException($"这台电脑上没有找到 {AppName}。");
+        var list = ClaudeModels.Normalize(models);
+        var current = Models();
+        _conf.Set("desktop_models", string.Join(",", list));
+        if (list.SequenceEqual(current)) { say("模型列表已经是最新的。"); return; }
+        if (ModeWord() == "gateway") SwitchToGateway(baseUrl, key);
+        else say("Claude 桌面应用现在是账号模式，下次切到网关时使用新模型列表。");
     }
 
     /// <summary>桌面应用用的网关地址：claude-mode.conf 的 desktop_base_url，没配就同命令行（不带 /v1，应用自己加 /v1/messages）。</summary>
@@ -83,7 +95,7 @@ public sealed class ClaudeDesktop(ClaudeDesktopPaths dp, AppPaths paths, IDeskto
     public void SwitchToAccount()
     {
         if (!Installed) throw new SwitchException($"这台电脑上没有找到 {AppName}。");
-        Apply(() => SetDeployment("1p"), $"已把 {AppName}切回账号模式。");
+        Apply(() => { EnableAccountSignIn(); SetDeployment("1p"); }, $"已把 {AppName}切回账号模式。", accountSignIn: true);
     }
 
     /// <summary>只同步两边的会话（不改模式）。应用开着时 Cowork 会话可能正写到一半，跳过。</summary>
@@ -100,7 +112,7 @@ public sealed class ClaudeDesktop(ClaudeDesktopPaths dp, AppPaths paths, IDeskto
 
     /// <summary>备份 → 退出应用 → 改配置 → 同步会话 → 重新打开。先退出再改：应用退出时会把内存里的设置写回 claude_desktop_config.json，
     /// 开着的时候改可能被盖掉；会话文件也可能正写到一半。</summary>
-    void Apply(Action write, string done)
+    void Apply(Action write, string done, bool accountSignIn = false)
     {
         var bk = Backup();
         var wasRunning = app.Running();
@@ -116,8 +128,12 @@ public sealed class ClaudeDesktop(ClaudeDesktopPaths dp, AppPaths paths, IDeskto
         }
         finally
         {
-            if (wasRunning)
-                try { app.Open(); } catch (Exception e) { say($"请手动打开 {AppName}（自动打开失败：{e.Message}）。"); }
+            if (wasRunning || ok && accountSignIn)
+                try
+                {
+                    if (ok && accountSignIn) app.OpenForAccountSignIn(); else app.Open();
+                }
+                catch (Exception e) { say($"请手动打开 {AppName}（自动打开失败：{e.Message}）。"); }
             else if (ok) say($"{AppName}没有在运行，下次打开时生效。");
         }
     }
@@ -142,6 +158,17 @@ public sealed class ClaudeDesktop(ClaudeDesktopPaths dp, AppPaths paths, IDeskto
         JsonFile.Write(GatewayConfig, o);
     }
 
+    void EnableAccountSignIn()
+    {
+        var id = JsonFile.String(JsonFile.ReadObject(Meta)["appliedId"]) ?? "";
+        if (!SafeId(id)) return;
+        var file = Path.Combine(Library, id + ".json");
+        var g = JsonFile.ReadObject(file);
+        if (g["disableDeploymentModeChooser"] is not JsonValue v || !v.TryGetValue<bool>(out var disabled) || !disabled) return;
+        g["disableDeploymentModeChooser"] = false;
+        JsonFile.Write(file, g);
+    }
+
     /// <summary>写进 appliedId 指向的那份配置（用户在应用里自己建过就沿用），没有就新建一份叫 “AA Switch” 的。</summary>
     void WriteGateway(string url, string key, List<string> models)
     {
@@ -160,6 +187,7 @@ public sealed class ClaudeDesktop(ClaudeDesktopPaths dp, AppPaths paths, IDeskto
         g["inferenceGatewayBaseUrl"] = url;
         g["inferenceGatewayApiKey"] = key;
         g["inferenceGatewayAuthScheme"] = "bearer";
+        g["disableDeploymentModeChooser"] = false;
         // 第三方模式默认只放行推理域名；允许 Cowork / Code 工具访问所有外网域名。
         g["coworkEgressAllowedHosts"] = new JsonArray("*");
         // 名字后面加 [1m]：桌面应用把模型名原样交给 Claude Code，带 [1m] 才按 1M 上下文算（和命令行的默认一样）

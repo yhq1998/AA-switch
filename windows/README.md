@@ -27,7 +27,7 @@ key 的条目名 `codex-mode:域名`（存在 Windows 凭据管理器的“普�
       `desktop_models` 可以单独指定。账号模式的数据在应用商店版的 `%LOCALAPPDATA%\Packages\Claude_…\LocalCache\Roaming\Claude`
       （安装包版是 `%APPDATA%\Claude`），两边的 Code 会话列表互相补齐、Cowork 会话按 `~\.claude\claude-mode-cowork-sync` 的记录双向同步，
       复制时把会话里的绝对路径改成应用眼里的新位置（应用商店版有重定向）。顺序：备份到 `claude-mode-backups\<时间>\desktop` → 退出应用（按程序位置认进程，
-      命令行的 claude.exe 不动；关窗口等 3 秒，不行就结束进程树）→ 改配置 → 同步 → 重新打开；原来没开着就下次打开生效。
+      命令行的 claude.exe 不动；关窗口等 3 秒，不行就结束进程树）→ 改配置 → 同步 → 重新打开；网关切换原来没开着就下次打开生效，账号切换会明确打开登录入口。
       命令行 `aaswitch claude desktop gateway|account|sync|mode`。命令行和桌面应用不在同一边时菜单两段都不选中并给出提示；
       Windows 环境变量里设了 `ANTHROPIC_*` 时状态里提醒（它会盖过账号模式）。安装包版的 `-3p` 目录位置没在真机上见过，按“已有的优先，否则 %LOCALAPPDATA%”处理
 - [x] 托盘程序 `AA Switch.exe`（`src/AASwitch.Tray`，WinForms）：每个产品一行“账号 | API”分段控件、配置表单（规范化地址，用 key 探测网关：401/403 拦下，
@@ -48,6 +48,8 @@ key 的条目名 `codex-mode:域名`（存在 Windows 凭据管理器的“普�
 - [ ] 代码签名（没签名的 exe 首次运行会被 SmartScreen 拦一下）
 
 ## 开发（macOS 上即可）
+
+共享功能与 macOS 同步：账号切换会解除旧配置中的 `disableDeploymentModeChooser`，并通过 `--claude-first-party-sign-in` 打开账号登录；Microsoft Store 版使用应用激活 API 传参。已有网关但模式值缺失时识别为网关。模型更新可从“更多 → 更新最新模型列表…”打开，或运行 `aaswitch claude desktop models --dry-run` 预览、去掉 `--dry-run` 应用。主窗口的“关闭窗口”保留托盘进程，“退出”结束应用；地址与切换说明位于“更多”。Claude 环境检测目前仅 macOS 提供。
 
 ```bash
 brew install dotnet

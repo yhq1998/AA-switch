@@ -52,7 +52,7 @@ public sealed class ClaudeProduct(ClaudeMode mode, AppPaths paths, ISecretStore 
         if (Desktop is { } d) lines.AddRange(d.Status());
         return lines;
     }
-    public (string, string) LoadConfig() { var c = mode.LoadConfig(); return (c.BaseUrl, c.Headers); }
+    public (string Url, string HeaderPairs) LoadConfig() { var c = mode.LoadConfig(); return (c.BaseUrl, c.Headers); }
     public string FindKey(string url) => secrets.Get(Gateway.SecretName(url)) ?? "";
     public string Configure(string url, string headerPairs, string? key) => mode.Configure(url, headerPairs, key);
     /// <summary>命令行总是重写一遍；桌面应用不在网关模式就切过去，已经在网关模式、命令行也已经是 API（即“重新应用”）时也重写并重启，

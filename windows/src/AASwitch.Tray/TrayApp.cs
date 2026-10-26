@@ -178,6 +178,7 @@ sealed class TrayApp : ApplicationContext
         if (_busy && _busyProduct.Length == 0) items.Add(Item(_busyText, null));
         else if (UpdateAvailable) items.Add(Item($"有新版本 {_latest!.Version}，点击更新…", () => _ = ApplyUpdateAsync()));
         items.Add(Label($"{AppInfo.Name} {AppInfo.Version}", _small, SystemColors.GrayText));
+        if (forWindow) items.Add(Item("关闭窗口", () => _window?.Close()));
         items.Add(Item("退出", () => { _icon.Visible = false; _window?.Close(); ExitThread(); }));
     }
 
@@ -270,6 +271,16 @@ sealed class TrayApp : ApplicationContext
                     }
                     var button = new Button { Text = action.Text, AutoSize = true, FlatStyle = FlatStyle.System, Margin = new Padding(0, 0, (int)(8 * scale), 0) };
                     button.Click += (_, _) => action.PerformClick();
+                    if (action.Text == "关闭窗口")
+                    {
+                        buttonRow!.AutoSize = false;
+                        buttonRow.Width = width;
+                        buttonRow.Height = button.PreferredSize.Height;
+                        var quit = items.Items.OfType<ToolStripMenuItem>().Single(x => x.Text == "退出");
+                        using var quitProbe = new Button { Text = quit.Text, AutoSize = true };
+                        var quitWidth = quitProbe.PreferredSize.Width;
+                        button.Margin = new Padding(0, 0, Math.Max(8, width - button.PreferredSize.Width - quitWidth - (int)(8 * scale)), 0);
+                    }
                     buttonRow.Controls.Add(button);
                     break;
                 case ToolStripMenuItem text:   // 不可点的：正在切换…、详细信息
@@ -302,18 +313,63 @@ sealed class TrayApp : ApplicationContext
             };
             items.Add(new ToolStripControlHost(row) { AutoSize = false, Size = row.Size, Margin = new Padding(2, 3, 12, 3) });
         }
-        items.Add(Small(view.UrlLine, view.UrlLineOpensConfigure ? () => OpenConfigure(p) : null));
-        foreach (var note in view.Notes) items.Add(Small(note));
+        if (view.UrlLineOpensConfigure || !_status.ContainsKey(p.Name)) items.Add(Small(view.UrlLine, view.UrlLineOpensConfigure ? () => OpenConfigure(p) : null));
+        foreach (var note in view.Notes.Where(n => mode == "none" && n.Contains("还没用"))) items.Add(Small(note));
         foreach (var w in view.Warnings) items.Add(Label(w, _menu.Font, Color.FromArgb(170, 90, 0)));
 
         var more = new ToolStripMenuItem("更多");
-        more.DropDownItems.Add(Item("配置 API 地址 / key…", () => OpenConfigure(p), !_busy));
-        if (view.CanReapply && !_busy) more.DropDownItems.Add(Item(p.DesktopMode() == "gateway" ? "重新应用 API 配置并重启 Claude 桌面应用" : "重新应用 API 配置", () => EnsureConfiguredThenSwitch(p)));
-        more.DropDownItems.Add(Item("打开备份文件夹", () => { Directory.CreateDirectory(p.BackupsDir); Process.Start("explorer.exe", $"\"{p.BackupsDir}\""); }));
-        if (view.Details.Count > 0 || !_status.ContainsKey(p.Name)) more.DropDownItems.Add(new ToolStripSeparator());
+        var configure = Item("配置 API 地址 / key…", () => OpenConfigure(p), !_busy);
+        configure.Image = ActionImages.Configure;
+        more.DropDownItems.Add(configure);
+        if (view.CanReapply && !_busy)
+        {
+            var reapply = Item(p.DesktopMode() == "gateway" ? "重新应用 API 配置并重启 Claude 桌面应用" : "重新应用 API 配置", () => EnsureConfiguredThenSwitch(p));
+            reapply.Image = ActionImages.Refresh;
+            more.DropDownItems.Add(reapply);
+        }
+        var backups = Item("打开备份文件夹", () => { Directory.CreateDirectory(p.BackupsDir); Process.Start("explorer.exe", $"\"{p.BackupsDir}\""); });
+        backups.Image = ActionImages.Folder;
+        more.DropDownItems.Add(backups);
+        if (p is ClaudeProduct { Desktop: not null } claude)
+        {
+            var models = Item("更新最新模型列表…", () => _ = UpdateClaudeModelsAsync(claude), !_busy);
+            models.Image = ActionImages.Models;
+            more.DropDownItems.Add(models);
+        }
+        more.DropDownItems.Add(new ToolStripSeparator());
         if (!_status.ContainsKey(p.Name)) more.DropDownItems.Add(Item("正在读取状态…", null));
+        else if (!view.UrlLineOpensConfigure) more.DropDownItems.Add(Item(view.UrlLine, null));
+        foreach (var note in view.Notes.Where(n => !n.Contains("还没用"))) more.DropDownItems.Add(Item(note, null));
         foreach (var d in view.Details) more.DropDownItems.Add(Item(d, null));
         items.Add(more);
+    }
+
+    async Task UpdateClaudeModelsAsync(ClaudeProduct p)
+    {
+        if (_busy || p.Desktop is not { } desktop) return;
+        _busy = true; _busyProduct = p.Name; _busyText = "正在问网关要模型列表…";
+        Rebuild();
+        try
+        {
+            var cfg = p.LoadConfig();
+            var key = p.FindKey(cfg.Url);
+            var models = await ClaudeModels.FetchAsync(cfg.Url, key, cfg.HeaderPairs);
+            var current = desktop.Models();
+            if (models.SequenceEqual(current))
+            {
+                MessageBox.Show("模型列表已经是最新的。\n" + string.Join("\n", models), "无需更新", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var gateway = desktop.ModeWord() == "gateway";
+            var text = "网关现在提供：\n" + string.Join("\n", models.Select((m, i) => m + (i == 0 ? "（默认）" : "")))
+                + "\n新增：" + string.Join("、", models.Except(current)) + "\n不再提供：" + string.Join("、", current.Except(models))
+                + (gateway ? "\n更新后会退出并重新打开 Claude，新列表马上能选。" : "\n当前为账号模式，下次切到网关时使用新列表。");
+            if (MessageBox.Show(text, "更新模型列表", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK) return;
+            _busyText = "正在更新模型列表…"; Rebuild();
+            await Task.Run(() => desktop.UpdateModels(models, cfg.Url, key));
+        }
+        catch (Exception e) { MessageBox.Show(e.Message, "模型列表更新失败", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+        finally { _busy = false; _busyProduct = ""; ReadModes(); Rebuild(); RefreshStatusAsync(); }
     }
 
     // ---------- 切换 ----------

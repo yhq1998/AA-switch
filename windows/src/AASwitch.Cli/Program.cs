@@ -2,6 +2,7 @@
 //   aaswitch claude api|account          Claude Code 切到自定义 API / 切回 Claude 账号
 //   aaswitch codex api|chatgpt           Codex 切到自定义 API / 切回 ChatGPT 账号（先关掉 Codex 应用、codex 命令行和 IDE 会话）
 //   aaswitch codex fix-threads           只做「统一会话 provider」这一步，不改模式
+//   aaswitch claude desktop models      从网关更新桌面模型列表（--dry-run 只查看）
 //   以下两边通用（把 <工具> 换成 claude 或 codex）：
 //   aaswitch <工具> status               查看当前模式（不显示 key）
 //   aaswitch <工具> configure            设置 API 地址、额外请求头和 key
@@ -127,6 +128,18 @@ try
                 case "mode": Console.WriteLine(desktop.ModeWord()); return 0;
                 case "account": desktop.SwitchToAccount(); return 0;
                 case "sync": desktop.SyncOnly(); return 0;
+                case "models":
+                    var modelCfg = claude.LoadConfig();
+                    var modelKey = secrets.Get(Gateway.SecretName(modelCfg.BaseUrl)) ?? "";
+                    var modelList = await ClaudeModels.FetchAsync(modelCfg.BaseUrl, modelKey, modelCfg.Headers);
+                    if (args.Skip(3).Contains("--dry-run"))
+                    {
+                        Console.WriteLine("models=" + string.Join(",", modelList));
+                        Console.WriteLine("current=" + string.Join(",", desktop.Models()));
+                        Console.WriteLine("desktop=" + desktop.ModeWord());
+                    }
+                    else desktop.UpdateModels(modelList, modelCfg.BaseUrl, modelKey);
+                    return 0;
                 case "gateway":
                     var cfg = claude.LoadConfig();
                     if (cfg.BaseUrl.Length == 0) throw new SwitchException("还没有配置 API 地址，请先运行 aaswitch claude configure。");
