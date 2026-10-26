@@ -341,6 +341,7 @@ ENTRY="$LIB/$(json "$LIB/_meta.json" appliedId).json"
 eq "网关配置里的地址" "$(json "$ENTRY" inferenceGatewayBaseUrl)" "$GW"
 eq "网关配置里的 key" "$(json "$ENTRY" inferenceGatewayApiKey)" "$KEY"
 eq "新网关配置允许所有外网域名" "$(json "$ENTRY" coworkEgressAllowedHosts.0)" "*"
+eq "新网关配置默认按需加载 MCP 工具" "$(json "$ENTRY" toolSearchEnabled)" "true"
 eq "带 key 的文件权限是 600" "$(stat -f %Lp "$ENTRY" 2>/dev/null)" 600
 [ -f "$A/local_bbb.json" ] && [ -f "$B/local_aaa.json" ] && pass || fail "两边的会话列表没有互相补齐"
 run claude desktop account; ok "桌面应用切回账号"
@@ -402,8 +403,10 @@ has "说明了什么时候生效" "$ERR" "下次切到网关模式"
 run claude status; has "status 里能看到默认模型" "$OUT" "桌面模型：默认 claude-opus-5-5，共 5 个"
 # 网关模式下更新：顺带重新应用，桌面应用的配置里跟着变
 plutil -replace coworkEgressAllowedHosts -json '["gw.example.test"]' "$ENTRY"
+plutil -replace toolSearchEnabled -bool false "$ENTRY"
 run claude desktop gateway; ok "切到网关模式（准备下一步）"
 eq "已有网关配置也解除外网域名限制" "$(json "$ENTRY" coworkEgressAllowedHosts.0)" "*"
+eq "已有网关配置重新应用后按需加载 MCP 工具" "$(json "$ENTRY" toolSearchEnabled)" "true"
 SMOKE_BODY="$MODELS_JSON" CLAUDE_MODE_MODELS="claude-opus-5-5, claude-sonnet-5 ," run claude desktop models
 ok "desktop models（指定列表）"
 eq "指定的列表写进了 conf" "$(sed -n 's/^desktop_models=//p' "$CLAUDE_CONFIG_DIR/claude-mode.conf")" "claude-opus-5-5,claude-sonnet-5"

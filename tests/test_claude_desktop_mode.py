@@ -107,6 +107,34 @@ fi''',
         self.assertFalse(json.loads((self.library / "fixture.json").read_text())
                          .get("disableDeploymentModeChooser", False))
 
+    def test_gateway_switch_enables_mcp_tool_search(self):
+        self.seed(None, "3p")
+        self.run_mode("desktop", "gateway")
+        entry = json.loads((self.library / "fixture.json").read_text())
+        self.assertIs(entry.get("toolSearchEnabled"), True,
+                      "Desktop otherwise disables MCP deferral in gateway sessions")
+
+    def test_reapply_gateway_enables_previously_disabled_tool_search(self):
+        self.seed(None, "3p")
+        file = self.library / "fixture.json"
+        entry = json.loads(file.read_text())
+        entry.update(toolSearchEnabled=False, customSetting={"keep": True})
+        file.write_text(json.dumps(entry))
+        self.run_mode("desktop", "gateway")
+        applied = json.loads(file.read_text())
+        self.assertIs(applied.get("toolSearchEnabled"), True)
+        self.assertEqual(applied["customSetting"], {"keep": True})
+        self.run_mode("desktop", "account")
+        self.assertIs(json.loads(file.read_text()).get("toolSearchEnabled"), True)
+
+    def test_new_gateway_enables_tool_search(self):
+        self.seed(None, None)
+        (self.library / "_meta.json").unlink()
+        self.run_mode("desktop", "gateway")
+        id = json.loads((self.library / "_meta.json").read_text())["appliedId"]
+        entry = json.loads((self.library / (id + ".json")).read_text())
+        self.assertIs(entry.get("toolSearchEnabled"), True)
+
     def test_switch_to_account_explicitly_overrides_saved_gateway(self):
         self.seed("3p", None)
         self.run_mode("desktop", "account")

@@ -134,6 +134,40 @@ public sealed class ClaudeDesktopTests : IDisposable
         Assert.Empty(_app.Calls);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Gateway_switch_enables_mcp_tool_search(bool? previous)
+    {
+        SeedGateway("3p");
+        var file = Path.Combine(Gateway3p, "configLibrary", "fixture.json");
+        var entry = Read(file);
+        if (previous.HasValue) entry["toolSearchEnabled"] = previous.Value;
+        entry["customSetting"] = new JsonObject { ["keep"] = true };
+        Write(file, entry.ToJsonString());
+
+        New().SwitchToGateway("https://gateway.example.test", "fixture-key");
+        var applied = Read(file);
+        Assert.True((bool?)applied["toolSearchEnabled"]);
+        Assert.True((bool)applied["customSetting"]!["keep"]!);
+        var backup = Directory.GetDirectories(_paths.ClaudeBackups).Single();
+        var saved = Read(Path.Combine(backup, "desktop", "configLibrary", "fixture.json"));
+        Assert.Equal(previous, (bool?)saved["toolSearchEnabled"]);
+
+        New().SwitchToAccount();
+        Assert.True((bool?)Read(file)["toolSearchEnabled"]);
+    }
+
+    [Fact]
+    public void New_gateway_enables_mcp_tool_search()
+    {
+        New().SwitchToGateway("https://gateway.example.test", "fixture-key");
+        var library = Path.Combine(Gateway3p, "configLibrary");
+        var id = (string)Read(Path.Combine(library, "_meta.json"))["appliedId"]!;
+        Assert.True((bool?)Read(Path.Combine(library, id + ".json"))["toolSearchEnabled"]);
+    }
+
     [Fact]
     public void Windows_installer_receives_explicit_account_sign_in_argument()
     {

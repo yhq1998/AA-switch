@@ -44,7 +44,7 @@
 #   （直接给定列表，不问网关，供图形界面把用户确认过的列表写回来）、CLAUDE_MODE_DRY_RUN=1（只打印 models= / current= /
 #   desktop=，什么都不写，供图形界面先弹确认框）。
 set -eu
-CLAUDE_MODE_VERSION="1.4.4"
+CLAUDE_MODE_VERSION="1.4.5"
 
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS="$CLAUDE_HOME/settings.json"
@@ -289,6 +289,8 @@ function run(argv) {
     g.inferenceGatewayApiKey = b;
     g.inferenceGatewayAuthScheme = 'bearer';
     g.disableDeploymentModeChooser = false; // 保留切回 Claude.ai 账号的入口
+    // 桌面网关默认禁用 MCP 按需加载；使用桌面端专用开关，单设 ENABLE_TOOL_SEARCH 无法覆盖。
+    g.toolSearchEnabled = true;
     // 第三方模式默认只放行推理域名；允许 Cowork / Code 工具访问所有外网域名。
     g.coworkEgressAllowedHosts = ['*'];
     // 名字后面加 [1m]：桌面应用把模型名原样交给 Claude Code，带 [1m] 才按 1M 上下文算（和命令行的默认一样，不管网关支不支持）
