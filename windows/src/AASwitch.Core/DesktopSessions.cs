@@ -1,4 +1,6 @@
 using System.Text;
+using System.Security.Cryptography;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -96,10 +98,36 @@ public sealed partial class DesktopSessions(ClaudeDesktopPaths dp, AppPaths path
     {
         var root = Path.Combine(dataDir, "local-agent-mode-sessions");
         if (!Directory.Exists(root)) return null;
-        if (account.Length > 0 && org.Length > 0 && Directory.Exists(Path.Combine(root, account, org))) return Path.Combine(root, account, org);
+        if (account.Length > 0 && org.Length > 0)
+        {
+            var shortDir = Path.Combine(root, ShortId(account), ShortId(org));
+            if (Directory.Exists(shortDir)) return shortDir;
+            var fullDir = Path.Combine(root, account, org);
+            return Directory.Exists(fullDir) ? fullDir : null;
+        }
         return MostSessions(Directory.GetDirectories(root)
             .Where(d => Path.GetFileName(d) != "skills-plugin")
-            .SelectMany(Directory.GetDirectories));
+            .SelectMany(Directory.GetDirectories)
+            .Where(d => {
+                var shortDir = Path.Combine(root, ShortId(Path.GetFileName(Path.GetDirectoryName(d)!)), ShortId(Path.GetFileName(d)));
+                return shortDir == d || !Directory.Exists(shortDir);
+            }), includeAgents: true);
+    }
+
+    static string ShortId(string id) => Guid.TryParseExact(id, "D", out _) ? id[..8].ToLowerInvariant() : id;
+
+    static string? ShortSessionName(string name)
+    {
+        var m = ShortSession().Match(name);
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
+    static string BodyDir(string dir, string name)
+    {
+        var full = Path.Combine(dir, name);
+        if (Directory.Exists(full)) return full;
+        return ShortSessionName(name) is { } shortName && Directory.Exists(Path.Combine(dir, shortName))
+            ? Path.Combine(dir, shortName) : full;
     }
 
     public sealed record PlanItem(string Action, string Name, long New, long? Old);
@@ -131,7 +159,7 @@ public sealed partial class DesktopSessions(ClaudeDesktopPaths dp, AppPaths path
         foreach (var line in File.ReadAllLines(file))
         {
             var parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0) continue;
+            if (parts.Length == 0 || parts[0].StartsWith('#')) continue;
             led[parts[0]] = parts.Length > 1 && long.TryParse(parts[1], out var v) ? v : 0;
         }
         return led;
@@ -174,29 +202,68 @@ public sealed partial class DesktopSessions(ClaudeDesktopPaths dp, AppPaths path
             say("Cowork 会话暂时没法同步（" + (b is null ? "网关模式还没初始化过 Cowork，在网关模式下打开一次 Cowork 标签后再切一次即可" : "账号模式的 Cowork 目录没找到") + "）。");
             return;
         }
+        int n = 0, c = 0, f = 0;
+        foreach (var section in new[] { "", "agent" })
+        {
+            var left = section.Length == 0 ? a : Path.Combine(a, section);
+            var right = section.Length == 0 ? b : Path.Combine(b, section);
+            if (!Directory.Exists(left) && !Directory.Exists(right)) continue;
+            Directory.CreateDirectory(left); Directory.CreateDirectory(right);
+            var counts = SyncCoworkPair(left, right, section.Length == 0 ? Ledger : Ledger + "-agent", bk);
+            n += counts.Copied; c += counts.Conflicts; f += counts.Failed;
+        }
+        say($"Cowork 会话已同步（更新 {n} 条）。");
+        if (c > 0) say($"有 {c} 条 Cowork 会话在两种模式下都继续聊过，没法合并，两边各自保留。");
+        if (f > 0) say($"有 {f} 条 Cowork 会话复制失败，下次切换时再试。");
+    }
+
+    (int Copied, int Conflicts, int Failed) SyncCoworkPair(string a, string b, string legacy, string bk)
+    {
+        const string prefix = "# aa-switch-cowork-pair-v1 ";
+        var pair = JsonSerializer.Serialize(new[] { a, b }, new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        var pairId = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(pair)));
+        var ledger = Path.Combine(legacy + ".pairs", pairId);
         List<PlanItem> plan;
-        try { plan = Plan(CoworkSessions(a), CoworkSessions(b), ReadLedger(Ledger)); }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { say("读取 Cowork 会话列表失败，这次没有同步。"); return; }
+        try
+        {
+            Directory.CreateDirectory(legacy + ".pairs");
+            if (!File.Exists(ledger) && File.Exists(legacy)) File.Copy(legacy, ledger);
+            var header = File.Exists(ledger) ? File.ReadLines(ledger).FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal)) : null;
+            var old = header is null || header == prefix + pair ? ReadLedger(ledger) : new Dictionary<string, long>();
+            plan = Plan(CoworkSessions(a), CoworkSessions(b), old);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        { say("读取 Cowork 会话列表失败，这次没有同步。"); return (0, 0, 1); }
 
         int n = 0, c = 0, f = 0;
-        var led = new StringBuilder();
-        foreach (var p in plan)
+        var led = new StringBuilder(prefix + pair + "\n");
+        foreach (var item in plan)
         {
+            var p = item;
+            if (p.Action == "keep")
+            {
+                var left = Directory.Exists(BodyDir(a, p.Name));
+                var right = Directory.Exists(BodyDir(b, p.Name));
+                if (left != right) p = p with { Action = left ? "a2b" : "b2a" };
+            }
             switch (p.Action)
             {
                 case "a2b" or "b2a":
                     var ok = p.Action == "a2b" ? Copy(a, b, p.Name, bk) : Copy(b, a, p.Name, bk);
                     if (ok) { n++; led.Append($"{p.Name} {p.New}\n"); }
-                    else { f++; if (p.Old is { } o) led.Append($"{p.Name} {o}\n"); }
+                    else
+                    {
+                        f++; say($"Cowork 会话 {p.Name} 复制失败，原会话保留。");
+                        if (p.Old is { } o) led.Append($"{p.Name} {o}\n");
+                    }
                     break;
                 case "conflict": c++; led.Append($"{p.Name} {p.Old}\n"); break;
                 default: led.Append($"{p.Name} {p.New}\n"); break;
             }
         }
-        AtomicFile.WriteAllText(Ledger, led.ToString());
-        say($"Cowork 会话已同步（更新 {n} 条）。");
-        if (c > 0) say($"有 {c} 条 Cowork 会话在两种模式下都继续聊过，没法合并，两边各自保留。");
-        if (f > 0) say($"有 {f} 条 Cowork 会话复制失败，下次切换时再试。");
+        AtomicFile.WriteAllText(ledger, led.ToString());
+        AtomicFile.WriteAllText(legacy, led.ToString());
+        return (n, c, f);
     }
 
     /// <summary>复制到目标的临时名下改好路径再换进去，目标原有的一份挪进备份。失败返回 false，目标不动。</summary>
@@ -207,15 +274,18 @@ public sealed partial class DesktopSessions(ClaudeDesktopPaths dp, AppPaths path
         try
         {
             Remove(tmp); Remove(tmpJson);
-            if (Directory.Exists(Path.Combine(src, name))) CopyDir(Path.Combine(src, name), tmp);
+            var body = BodyDir(src, name);
+            if (!Directory.Exists(body)) return false;
+            CopyDir(body, tmp);
             Rewrite(src, dst, tmp, Path.Combine(src, name + ".json"), tmpJson);
             var dstDir = Path.Combine(dst, name);
+            var oldBody = BodyDir(dst, name);
             var dstJson = Path.Combine(dst, name + ".json");
-            if (Path.Exists(dstDir) || File.Exists(dstJson))
+            if (Path.Exists(oldBody) || File.Exists(dstJson))
             {
                 var keep = Path.Combine(bk, "cowork", Path.GetFileName(dst));
                 Directory.CreateDirectory(keep);
-                if (Directory.Exists(dstDir)) MoveDir(dstDir, Path.Combine(keep, name));
+                if (Directory.Exists(oldBody)) MoveDir(oldBody, Path.Combine(keep, name));
                 if (File.Exists(dstJson)) File.Move(dstJson, Path.Combine(keep, name + ".json"), overwrite: true);
             }
             if (Directory.Exists(tmp)) Directory.Move(tmp, dstDir);
@@ -236,9 +306,12 @@ public sealed partial class DesktopSessions(ClaudeDesktopPaths dp, AppPaths path
     {
         var meta = File.ReadAllText(srcJson, Encoding.UTF8);
         var name = Path.GetFileNameWithoutExtension(srcJson);
-        var from = RootFromCwd(meta, name) ?? dp.AppView(src);
-        var to = DstRoot(dst) ?? dp.AppView(dst);
-        var pairs = Pairs(from, to);
+        var bodyName = Path.GetFileName(BodyDir(src, name));
+        var shortRoot = RootFromCwd(meta, bodyName);
+        var from = shortRoot ?? RootFromCwd(meta, name) ?? dp.AppView(src);
+        var storedName = shortRoot is null ? name : bodyName;
+        var to = DstRoot(dst, from) ?? dp.AppView(dst);
+        var pairs = Pairs(Path.Combine(from, storedName), Path.Combine(to, name)).Concat(Pairs(from, to)).ToList();
         string Fix(string t) => pairs.Aggregate(t, (t, p) => t.Replace(p.From, p.To, StringComparison.Ordinal));
 
         var cl = Path.Combine(tmp, ".claude");
@@ -283,11 +356,17 @@ public sealed partial class DesktopSessions(ClaudeDesktopPaths dp, AppPaths path
     }
 
     /// <summary>目标目录在应用眼里的路径：从目标里已有会话的 cwd 推。</summary>
-    string? DstRoot(string dst)
+    string? DstRoot(string dst, string excludedRoot)
     {
         foreach (var f in Directory.GetFiles(dst, "local_*.json").OrderByDescending(File.GetLastWriteTimeUtc))
         {
-            try { if (RootFromCwd(File.ReadAllText(f, Encoding.UTF8), Path.GetFileNameWithoutExtension(f)) is { } r) return r; }
+            try
+            {
+                var name = Path.GetFileNameWithoutExtension(f);
+                var meta = File.ReadAllText(f, Encoding.UTF8);
+                var r = RootFromCwd(meta, Path.GetFileName(BodyDir(dst, name))) ?? RootFromCwd(meta, name);
+                if (r is not null && !string.Equals(r, excludedRoot, StringComparison.OrdinalIgnoreCase)) return r;
+            }
             catch (IOException) { }
         }
         return null;
@@ -310,12 +389,13 @@ public sealed partial class DesktopSessions(ClaudeDesktopPaths dp, AppPaths path
     public static string Sanitize(string p) => NonAlnum().Replace(p, "-");
 
     // ---------- 文件工具 ----------
-    static string? MostSessions(IEnumerable<string> dirs)
+    static string? MostSessions(IEnumerable<string> dirs, bool includeAgents = false)
     {
         string? best = null; var bestN = -1;
         foreach (var d in dirs.OrderBy(d => d, StringComparer.Ordinal))
         {
             var n = Directory.GetFiles(d, "local_*.json").Length;
+            if (includeAgents && Directory.Exists(Path.Combine(d, "agent"))) n += Directory.GetFiles(Path.Combine(d, "agent"), "local_*.json").Length;
             if (n > bestN) { best = d; bestN = n; }
         }
         return best;
@@ -359,7 +439,8 @@ public sealed partial class DesktopSessions(ClaudeDesktopPaths dp, AppPaths path
     }
 
     [GeneratedRegex("^[0-9a-f-]{36}$")] private static partial Regex Uuid();
-    [GeneratedRegex(@"^(local_[0-9A-Za-z-]+)\.json$")] private static partial Regex SessionFile();
+    [GeneratedRegex(@"^(local_[0-9A-Za-z_-]+)\.json$")] private static partial Regex SessionFile();
+    [GeneratedRegex(@"^local_([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")] private static partial Regex ShortSession();
     [GeneratedRegex(@"\.jsonl?$|\.json\.backup")] private static partial Regex RewriteName();
     [GeneratedRegex("[^A-Za-z0-9]")] private static partial Regex NonAlnum();
 }

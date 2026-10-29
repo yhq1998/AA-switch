@@ -33,7 +33,7 @@ AA Switch 住在 Mac 的菜单栏（或 Windows 的托盘）里，点开就能�
 </table>
 
 - **两种模式，一键切换。** 用订阅账号，或者走你自己的 API key，想换随时换。Codex 和 Claude Code 各自独立切换。
-- **历史会话跟着走。** 切换前后，所有对话都还在，都能继续聊。
+- **本地会话跟着走。** 切换时保留 Codex、Claude Code 和本地 Cowork / Tasks 会话；普通 Chat 云端历史不在 API 模式的同步范围内。
 - **不用重新登录。** AA Switch 记得你的 ChatGPT 登录态，切回账号时不用再登一次；Claude 账号的登录态则根本不会被动。
 - **默认就安全。** 每次切换前先备份设置，出了问题自动恢复。
 - **一个 key 两边用。** 同一个网关的 key 只需要填一次，Codex 和 Claude Code 共用。

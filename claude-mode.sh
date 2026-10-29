@@ -44,7 +44,7 @@
 #   （直接给定列表，不问网关，供图形界面把用户确认过的列表写回来）、CLAUDE_MODE_DRY_RUN=1（只打印 models= / current= /
 #   desktop=，什么都不写，供图形界面先弹确认框）。
 set -eu
-CLAUDE_MODE_VERSION="1.4.5"
+CLAUDE_MODE_VERSION="1.4.6"
 
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS="$CLAUDE_HOME/settings.json"
@@ -376,15 +376,35 @@ desktop_sync_sessions() {  # 两个 profile 的会话记录互相补齐：只补
 cowork_dir() {  # cowork_dir <数据目录> [账号 uuid] [组织 uuid]：该 profile 的 Cowork 会话目录；找不到输出空
   local root="$1/local-agent-mode-sessions" acct="${2:-}" org="${3:-}" d best="" bestn=-1 n
   [ -d "$root" ] || return 0
-  if [ -n "$acct" ] && [ -n "$org" ] && [ -d "$root/$acct/$org" ]; then printf '%s' "$root/$acct/$org"; return 0; fi
+  # 新版 Desktop 优先使用 UUID 的前 8 位；完整 UUID 目录可能是迁移前遗留的旧列表。
+  if [ -n "$acct" ] && [ -n "$org" ]; then
+    d="$root/$(cowork_short_id "$acct")/$(cowork_short_id "$org")"
+    if [ -d "$d" ]; then printf '%s' "$d"; return 0; fi
+    if [ -d "$root/$acct/$org" ]; then printf '%s' "$root/$acct/$org"; return 0; fi
+    # 已知当前身份时不能把其他账号的会话混进来。
+    return 0
+  fi
   for d in "$root"/*/*/; do   # 否则取会话最多的那个（网关模式是 <账号前 8 位>/<组织前 8 位>，比如 c0062ea9/00000000）
     d="${d%/}"; [ -d "$d" ] || continue
     case "$d" in "$root"/skills-plugin/*) continue ;; esac
-    n=$(ls "$d"/local_*.json 2>/dev/null | wc -l | tr -d ' ')
+    local short="$root/$(cowork_short_id "$(basename "$(dirname "$d")")")/$(cowork_short_id "$(basename "$d")")"
+    if [ "$short" != "$d" ] && [ -d "$short" ]; then continue; fi
+    n=$(ls "$d"/local_*.json "$d"/agent/local_*.json 2>/dev/null | wc -l | tr -d ' ')
     if [ "$n" -gt "$bestn" ]; then best="$d"; bestn=$n; fi
   done
   if [ -n "$best" ]; then printf '%s' "$best"; fi
   return 0
+}
+cowork_short_id() {
+  if [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    printf '%s' "${1:0:8}" | tr 'A-F' 'a-f'
+  else printf '%s' "$1"; fi
+}
+cowork_body_dir() {  # Desktop 既支持 local_<uuid>/，也支持 <uuid 前 8 位>/。
+  if [ -d "$1/$2" ]; then printf '%s' "$1/$2"; return; fi
+  if [[ "$2" =~ ^local_([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] && [ -d "$1/${BASH_REMATCH[1]}" ]; then
+    printf '%s' "$1/${BASH_REMATCH[1]}"
+  else printf '%s' "$1/$2"; fi
 }
 cowork_js() {  # cowork_js plan <A> <B> <记录文件> | rewrite <源目录> <目标目录> <临时目录> <源 json> <目标 json>
   osascript -l JavaScript - "$@" <<'EOF'
@@ -400,10 +420,15 @@ function write(f, text, like) {   // 保留 like 的修改时间和权限（应�
   fm.setAttributesOfItemAtPathError(d, f, null);
 }
 function list(dir) { const a = fm.contentsOfDirectoryAtPathError(dir, null); return a.isNil() ? [] : ObjC.deepUnwrap(a); }
+function bodyExists(dir, name) {
+  if (fm.fileExistsAtPath(dir + '/' + name)) return true;
+  const m = /^local_([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.exec(name);
+  return !!m && fm.fileExistsAtPath(dir + '/' + m[1]);
+}
 function sessions(dir) {   // 名字 → lastActivityAt
   const out = {};
   for (const f of list(dir)) {
-    const m = /^(local_[0-9A-Za-z-]+)\.json$/.exec(f); if (!m) continue;
+    const m = /^(local_[0-9A-Za-z_-]+)\.json$/.exec(f); if (!m) continue;
     let last = 0; try { last = Number(JSON.parse(read(dir + '/' + f)).lastActivityAt) || 0; } catch (e) {}
     out[m[1]] = last;
   }
@@ -412,9 +437,15 @@ function sessions(dir) {   // 名字 → lastActivityAt
 const san = p => p.replace(/[^A-Za-z0-9]/g, '-');   // Claude Code 给 .claude/projects 下的目录起名的规则
 function run(argv) {
   const [op] = argv;
+  if (op === 'pair') return JSON.stringify(argv.slice(1));
   if (op === 'plan') {   // 每行：动作 名字 新记录 旧记录（- 表示没有）
     const [, A, B, ledger] = argv, a = sessions(A), b = sessions(B), led = {}, out = [];
-    for (const line of (read(ledger) || '').split('\n')) { const [n, v] = line.trim().split(/\s+/); if (n) led[n] = Number(v) || 0; }
+    const lines = (read(ledger) || '').split('\n'), prefix = '# aa-switch-cowork-pair-v1 ';
+    // 旧版账本首次升级绑定当前目录对；此后换目录不会把缺失误判成用户删除。
+    const pair = lines.find(line => line.startsWith(prefix));
+    if (!pair || pair.slice(prefix.length) === JSON.stringify([A, B])) {
+      for (const line of lines) { const [n, v] = line.trim().split(/\s+/); if (n && !n.startsWith('#')) led[n] = Number(v) || 0; }
+    }
     for (const n of new Set([...Object.keys(a), ...Object.keys(b), ...Object.keys(led)])) {
       const inA = n in a, inB = n in b, has = n in led, L = led[n], old = has ? String(L) : '-';
       if (!inA && !inB) continue;                                      // 两边都没了，记录也不要了
@@ -423,7 +454,12 @@ function run(argv) {
         else out.push((inA ? 'a2b ' : 'b2a ') + n + ' ' + (inA ? a[n] : b[n]) + ' -');
         continue;
       }
-      if (a[n] === b[n]) { out.push('keep ' + n + ' ' + a[n] + ' ' + old); continue; }
+      if (a[n] === b[n]) {
+        const bodyA = bodyExists(A, n), bodyB = bodyExists(B, n);
+        // 修补旧版本只复制了元数据、漏掉短名正文目录的情况。
+        out.push((bodyA !== bodyB ? (bodyA ? 'a2b ' : 'b2a ') : 'keep ') + n + ' ' + a[n] + ' ' + old);
+        continue;
+      }
       const newA = !has || a[n] > L, newB = !has || b[n] > L;
       if (has && newA && newB) out.push('conflict ' + n + ' ' + L + ' ' + old);
       else if (has ? newA : a[n] > b[n]) out.push('a2b ' + n + ' ' + a[n] + ' ' + old);
@@ -432,11 +468,13 @@ function run(argv) {
     return out.join('\n');
   }
   if (op === 'rewrite') {
-    const [, srcDir, dst, tmp, srcJson, dstJson] = argv;
+    const [, srcDir, dst, tmp, srcJson, dstJson, srcBody] = argv;
+    const name = srcJson.split('/').pop().replace(/\.json$/, ''), bodyName = (srcBody || srcDir + '/' + name).split('/').pop();
     let src = srcDir;   // 记录里的旧路径以会话自己的 cwd（<目录>/<local_id>/outputs）为准，它不一定是现在所在的目录
-    try { const cwd = JSON.parse(read(srcJson)).cwd || '', mark = '/' + srcJson.split('/').pop().replace(/\.json$/, '') + '/';
+    try { const cwd = JSON.parse(read(srcJson)).cwd || '', mark = '/' + bodyName + '/';
           if (cwd.indexOf(mark) > 0) src = cwd.slice(0, cwd.indexOf(mark)); } catch (e) {}
-    const pairs = [[src, dst], [san(src), san(dst)]];
+    // 目标使用完整会话名；短名正文目录的 cwd 和 transcript 路径也要一起改。
+    const pairs = [[src + '/' + bodyName, dst + '/' + name], [san(src + '/' + bodyName), san(dst + '/' + name)], [src, dst], [san(src), san(dst)]];
     const fix = t => pairs.reduce((t, [x, y]) => t.split(x).join(y), t);
     const cl = tmp + '/.claude';
     if (fm.fileExistsAtPath(cl)) {
@@ -459,22 +497,23 @@ function run(argv) {
 EOF
 }
 cowork_copy() {  # cowork_copy <源目录> <目标目录> <local_id>：复制到目标的临时名下改好路径再换进去，目标原有的一份挪进备份
-  local src="$1" dst="$2" name="$3" tmp="$2/.aa-switch-$3"
+  local src="$1" dst="$2" name="$3" tmp="$2/.aa-switch-$3" body dst_body
+  body="$(cowork_body_dir "$src" "$name")"; dst_body="$(cowork_body_dir "$dst" "$name")"
+  [ -d "$body" ] || { say "Cowork 会话 ${name} 的正文目录未找到，未复制列表项。"; return 1; }
   rm -rf "$tmp" "$tmp.json"
-  if [ -d "$src/$name" ]; then   # APFS 上用克隆（cp -c），大会话也不额外占空间；不支持时退回普通复制
-    cp -cRp "$src/$name" "$tmp" 2>/dev/null || { rm -rf "$tmp"; cp -Rp "$src/$name" "$tmp" || { rm -rf "$tmp"; return 1; }; }
-  fi
-  if ! cowork_js rewrite "$src" "$dst" "$tmp" "$src/$name.json" "$tmp.json" >/dev/null 2>&1; then rm -rf "$tmp" "$tmp.json"; return 1; fi
-  if [ -e "$dst/$name.json" ] || [ -e "$dst/$name" ]; then
+  # APFS 上用克隆（cp -c），大会话也不额外占空间；不支持时退回普通复制
+  cp -cRp "$body" "$tmp" 2>/dev/null || { rm -rf "$tmp"; cp -Rp "$body" "$tmp" || { rm -rf "$tmp"; return 1; }; }
+  if ! cowork_js rewrite "$src" "$dst" "$tmp" "$src/$name.json" "$tmp.json" "$body" >/dev/null 2>&1; then rm -rf "$tmp" "$tmp.json"; return 1; fi
+  if [ -e "$dst/$name.json" ] || [ -e "$dst_body" ]; then
     mkdir -p "$BK/cowork/$(basename "$dst")"
-    if [ -e "$dst/$name" ]; then mv "$dst/$name" "$BK/cowork/$(basename "$dst")/"; fi
+    if [ -e "$dst_body" ]; then mv "$dst_body" "$BK/cowork/$(basename "$dst")/$name"; fi
     if [ -e "$dst/$name.json" ]; then mv "$dst/$name.json" "$BK/cowork/$(basename "$dst")/"; fi
   fi
   if [ -d "$tmp" ]; then mv "$tmp" "$dst/$name"; fi
   mv "$tmp.json" "$dst/$name.json"
 }
 desktop_sync_cowork() {  # 两个 profile 的 Cowork 会话互相同步（规则见上）；应该在桌面应用退出后调用
-  local ids acct org a b plan act name new old n=0 c=0 f=0 ledger="$CLAUDE_HOME/claude-mode-cowork-sync" led=""
+  local ids acct org a b n=0 c=0 f=0 ledger="$CLAUDE_HOME/claude-mode-cowork-sync"
   a="$DESKTOP_DATA/local-agent-mode-sessions"; b="${DESKTOP_DATA}-3p/local-agent-mode-sessions"
   if [ ! -d "$a" ] && [ ! -d "$b" ]; then return 0; fi   # 没用过 Cowork
   ids="$(oauth_ids)"; acct="${ids%% *}"; org="${ids#* }"; [ "$org" = "$ids" ] && org=""
@@ -484,7 +523,27 @@ desktop_sync_cowork() {  # 两个 profile 的 Cowork 会话互相同步（规则
     say "Cowork 会话暂时没法同步（$( [ -z "$b" ] && echo "网关模式还没初始化过 Cowork，在网关模式下打开一次 Cowork 标签后再切一次即可" || echo "账号模式的 Cowork 目录没找到" )）。"
     return 0
   fi
-  plan="$(cowork_js plan "$a" "$b" "$ledger" 2>/dev/null)" || { say "读取 Cowork 会话列表失败，这次没有同步。"; return 0; }
+  cowork_sync_pair "$a" "$b" "$ledger"
+  # 新版 Desktop 将 agent 类型的 Cowork 任务放在独立子目录；保留该层级。
+  if [ -d "$a/agent" ] || [ -d "$b/agent" ]; then
+    mkdir -p "$a/agent" "$b/agent"
+    cowork_sync_pair "$a/agent" "$b/agent" "$ledger-agent"
+  fi
+  say "Cowork 会话已同步（更新 ${n} 条）。"
+  if [ "$c" -gt 0 ]; then say "有 ${c} 条 Cowork 会话在两种模式下都继续聊过，没法合并，两边各自保留。"; fi
+  if [ "$f" -gt 0 ]; then say "有 ${f} 条 Cowork 会话复制失败，下次切换时再试。"; fi
+  return 0
+}
+cowork_sync_pair() {
+  # n/c/f 是 desktop_sync_cowork 的局部计数，由 Bash 动态作用域在两层目录间累加。
+  local a="$1" b="$2" legacy="$3" ledger plan act name new old led="" pair pair_id
+  pair="$(cowork_js pair "$a" "$b")"
+  pair_id="$(printf '%s' "$pair" | shasum -a 256 | cut -d ' ' -f 1)"
+  ledger="$legacy.pairs/$pair_id"
+  mkdir -p "$legacy.pairs"
+  # 每个目录对各留一份账本；往返切换时，旧目录里的删除/冲突判断仍然保留。
+  if [ ! -f "$ledger" ] && [ -f "$legacy" ]; then cp -p "$legacy" "$ledger"; fi
+  plan="$(cowork_js plan "$a" "$b" "$ledger" 2>/dev/null)" || { say "读取 Cowork 会话列表失败，这次没有同步。"; f=$((f+1)); return 0; }
   while read -r act name new old; do
     [ -n "$act" ] || continue
     case "$act" in
@@ -493,6 +552,7 @@ desktop_sync_cowork() {  # 两个 profile 的 Cowork 会话互相同步（规则
           n=$((n+1)); led="$led$name $new
 "
         else
+          say "Cowork 会话 ${name} 复制失败，原会话保留。"
           f=$((f+1)); if [ "$old" != - ]; then led="$led$name $old
 "; fi
         fi ;;
@@ -504,11 +564,9 @@ desktop_sync_cowork() {  # 两个 profile 的 Cowork 会话互相同步（规则
   done <<EOF
 $plan
 EOF
-  printf '%s' "$led" > "$ledger.tmp" && mv "$ledger.tmp" "$ledger"
-  say "Cowork 会话已同步（更新 ${n} 条）。"
-  if [ "$c" -gt 0 ]; then say "有 ${c} 条 Cowork 会话在两种模式下都继续聊过，没法合并，两边各自保留。"; fi
-  if [ "$f" -gt 0 ]; then say "有 ${f} 条 Cowork 会话复制失败，下次切换时再试。"; fi
-  return 0
+  printf '# aa-switch-cowork-pair-v1 %s\n%s' "$pair" "$led" > "$ledger.tmp" && mv "$ledger.tmp" "$ledger"
+  # 保留旧路径作为最近一次同步的快照，方便旧工具和排障查看。
+  cp -p "$ledger" "$legacy.tmp" && mv "$legacy.tmp" "$legacy"
 }
 backup_desktop() {
   mkdir -p "$BK/desktop"

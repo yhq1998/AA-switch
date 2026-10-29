@@ -193,6 +193,172 @@ fi''',
         self.assertIn("--claude-first-party-sign-in",
                       Path(self.env["DESKTOP_TEST_OPEN_ARGS"]).read_text().splitlines())
 
+    def cowork_session(self, directory, name, last=100, body_name=None):
+        session = directory / (body_name or name)
+        (session / "outputs").mkdir(parents=True, exist_ok=True)
+        (session / "outputs/result.txt").write_text("fixture output")
+        cwd = str(session / "outputs")
+        project = session / ".claude/projects" / "".join(c if c.isascii() and c.isalnum() else "-" for c in cwd)
+        project.mkdir(parents=True, exist_ok=True)
+        (project / "chat.jsonl").write_text(json.dumps({"cwd": cwd, "text": "fixture conversation"}) + "\n")
+        (session / "audit.jsonl").write_text("signed fixture: " + cwd)
+        (directory / (name + ".json")).write_text(json.dumps({
+            "sessionId": name, "cwd": cwd, "lastActivityAt": last,
+        }))
+
+    def cowork_paths(self):
+        account = "11111111-2222-3333-4444-555555555555"
+        org = "66666666-7777-8888-9999-000000000000"
+        (self.root / ".claude.json").write_text(json.dumps({
+            "oauthAccount": {"accountUuid": account, "organizationUuid": org},
+        }))
+        return (self.account_config.parent / "local-agent-mode-sessions" / account / org,
+                self.gateway_config.parent / "local-agent-mode-sessions/aaaaaaaa/00000000")
+
+    def test_cowork_history_reaches_new_gateway_profile(self):
+        self.seed("1p", "3p")
+        a, b = self.cowork_paths()
+        self.cowork_session(a, "local_account")
+        self.cowork_session(b, "local_gateway")
+        self.run_mode("desktop", "gateway")
+        self.assertTrue((b / "local_account.json").exists())
+        # Desktop initializes a different local identity; this is not a deletion
+        # of individual conversations in the previous profile.
+        b.parent.rename(self.root / "previous-gateway-profile")
+        new_b = b.parent.parent / "bbbbbbbb/00000000"
+        self.cowork_session(new_b, "local_new")
+        self.run_mode("desktop", "gateway")
+        self.assertTrue((new_b / "local_account.json").exists(),
+                        "Account history is missing after switching to the new API profile")
+        self.assertTrue((new_b / "local_account/outputs/result.txt").exists())
+
+    def test_cowork_history_with_underscores_reaches_api(self):
+        self.seed("1p", "3p")
+        a, b = self.cowork_paths()
+        self.cowork_session(a, "local_regular")
+        self.cowork_session(a, "local_ditto_12345678_g1")
+        self.cowork_session(b, "local_gateway")
+        self.run_mode("desktop", "gateway")
+        self.assertTrue((b / "local_regular.json").exists())
+        self.assertTrue((b / "local_ditto_12345678_g1.json").exists(),
+                        "Only the Cowork conversation with underscores disappeared in API mode")
+        self.assertTrue((b / "local_ditto_12345678_g1/outputs/result.txt").exists())
+
+    def test_cowork_short_storage_body_is_copied_with_history(self):
+        self.seed("1p", "3p")
+        a, b = self.cowork_paths()
+        name = "local_12345678-1111-2222-3333-444444444444"
+        self.cowork_session(a, name, body_name="12345678")
+        self.cowork_session(b, "local_gateway")
+        self.run_mode("desktop", "gateway")
+        self.assertTrue((b / (name + ".json")).exists())
+        self.assertTrue((b / name / "outputs/result.txt").exists(),
+                        "Metadata was copied without the Cowork conversation's short storage directory")
+        self.assertEqual(json.loads((b / (name + ".json")).read_text())["cwd"],
+                         str(b / name / "outputs"))
+        transcripts = list((b / name / ".claude/projects").glob("*/chat.jsonl"))
+        self.assertEqual(len(transcripts), 1)
+        self.assertEqual(json.loads(transcripts[0].read_text())["cwd"], str(b / name / "outputs"))
+        expected_project = "".join(c if c.isascii() and c.isalnum() else "-" for c in str(b / name / "outputs"))
+        self.assertEqual(transcripts[0].parent.name, expected_project)
+        self.assertEqual((b / name / "audit.jsonl").read_bytes(), (a / "12345678/audit.jsonl").read_bytes())
+
+    def test_cowork_short_account_directory_is_selected(self):
+        self.seed("1p", "3p")
+        a, b = self.cowork_paths()
+        short_a = a.parent.parent / a.parent.name[:8] / a.name[:8]
+        self.cowork_session(a, "local_legacy")
+        self.cowork_session(short_a, "local_current")
+        self.cowork_session(b, "local_gateway")
+        self.run_mode("desktop", "gateway")
+        self.assertTrue((b / "local_current.json").exists(),
+                        "Cowork's active short account directory was ignored in favor of the old UUID directory")
+
+    def test_cowork_agent_subdirectory_reaches_api(self):
+        self.seed("1p", "3p")
+        a, b = self.cowork_paths()
+        self.cowork_session(a, "local_legacy")
+        self.cowork_session(a / "agent", "local_newtask")
+        self.cowork_session(b, "local_gateway")
+        self.run_mode("desktop", "gateway")
+        self.assertTrue((b / "local_legacy.json").exists())
+        self.assertTrue((b / "agent/local_newtask.json").exists(),
+                        "Only Cowork tasks in the agent subdirectory disappeared in API mode")
+        self.assertTrue((b / "agent/local_newtask/outputs/result.txt").exists())
+
+    def test_cowork_sync_repairs_old_metadata_only_copy(self):
+        self.seed("1p", "3p")
+        a, b = self.cowork_paths()
+        name = "local_12345678-1111-2222-3333-444444444444"
+        self.cowork_session(a / "agent", name, body_name="12345678")
+        (b / "agent").mkdir(parents=True)
+        (b / "agent" / (name + ".json")).write_bytes((a / "agent" / (name + ".json")).read_bytes())
+        self.run_mode("desktop", "gateway")
+        self.assertTrue((b / "agent" / name / "outputs/result.txt").exists())
+        self.assertEqual(json.loads((b / "agent" / (name + ".json")).read_text())["cwd"],
+                         str(b / "agent" / name / "outputs"))
+
+    def test_cowork_agent_deletion_and_conflict_still_respected(self):
+        self.seed("1p", "3p")
+        a, b = self.cowork_paths()
+        self.cowork_session(a / "agent", "local_task")
+        b.mkdir(parents=True)
+        self.run_mode("desktop", "gateway")
+        self.cowork_session(a / "agent", "local_task", 200)
+        self.cowork_session(b / "agent", "local_task", 300)
+        self.run_mode("desktop", "sync")
+        self.assertEqual(json.loads((a / "agent/local_task.json").read_text())["lastActivityAt"], 200)
+        self.assertEqual(json.loads((b / "agent/local_task.json").read_text())["lastActivityAt"], 300)
+        (b / "agent/local_task.json").unlink()
+        self.run_mode("desktop", "sync")
+        self.assertFalse((b / "agent/local_task.json").exists(), "Deleted conversations must stay deleted")
+        self.assertTrue((a / "agent/local_task.json").exists())
+
+    def test_cowork_missing_source_body_is_reported_and_retried(self):
+        self.seed("1p", "3p")
+        a, b = self.cowork_paths()
+        a.mkdir(parents=True)
+        b.mkdir(parents=True)
+        (a / "local_task.json").write_text('{"lastActivityAt":100}')
+        self.run_mode("desktop", "gateway")
+        self.assertFalse((b / "local_task.json").exists())
+        self.assertNotIn("local_task", (self.root / ".claude/claude-mode-cowork-sync").read_text())
+        self.cowork_session(a, "local_task")
+        self.run_mode("desktop", "sync")
+        self.assertTrue((b / "local_task/outputs/result.txt").exists())
+
+    def test_cowork_deletion_ledger_survives_switching_profiles_back(self):
+        self.seed("1p", "3p")
+        a, b = self.cowork_paths()
+        self.cowork_session(a, "local_task")
+        self.cowork_session(b, "local_gateway")
+        self.run_mode("desktop", "gateway")
+        (b / "local_task.json").unlink()
+        self.run_mode("desktop", "sync")
+        saved = self.root / "previous-gateway-profile"
+        b.parent.rename(saved)
+        new_b = b.parent.parent / "bbbbbbbb/00000000"
+        self.cowork_session(new_b, "local_new")
+        self.run_mode("desktop", "gateway")
+        self.assertTrue((new_b / "local_task.json").exists())
+        new_b.parent.rename(self.root / "next-gateway-profile")
+        saved.rename(b.parent)
+        self.run_mode("desktop", "sync")
+        self.assertFalse((b / "local_task.json").exists(),
+                         "Returning to an old profile resurrected its deleted conversation")
+
+    def test_cowork_legacy_deletion_ledger_is_preserved(self):
+        self.seed("1p", "3p")
+        a, b = self.cowork_paths()
+        self.cowork_session(a, "local_task")
+        self.cowork_session(b, "local_gateway")
+        ledger = self.root / ".claude/claude-mode-cowork-sync"
+        ledger.write_text("local_task 100\n")
+        self.run_mode("desktop", "gateway")
+        self.assertFalse((b / "local_task.json").exists())
+        self.assertTrue((a / "local_task.json").exists())
+        self.assertIn("# aa-switch-cowork-pair-v1 ", ledger.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

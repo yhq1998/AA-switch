@@ -35,7 +35,7 @@ AA Switch lives in your Mac's menu bar (or the Windows system tray). Open it to 
 <p align="center"><sub>The interface is in Chinese. Each product has one Account | API toggle; the lit half is the current mode.</sub></p>
 
 - **Two modes, one click.** Use your subscription, or route through your own API key. Switch back and forth as often as you like; Codex and Claude Code flip independently.
-- **Your history comes with you.** Every conversation stays visible and usable on both sides.
+- **Your local history comes with you.** Switching preserves Codex, Claude Code, and local Cowork / Tasks sessions. Regular cloud Chat history is outside API-mode synchronization.
 - **No re-login.** AA Switch remembers your ChatGPT session, so coming back to your account doesn't mean signing in again. Your Claude account login is never touched at all.
 - **Safe by default.** Settings are backed up before every switch and restored automatically if anything goes wrong.
 - **One key, both tools.** Enter a gateway's key once; Codex and Claude Code share it.

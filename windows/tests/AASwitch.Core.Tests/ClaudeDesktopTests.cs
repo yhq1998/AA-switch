@@ -411,6 +411,119 @@ public sealed class ClaudeDesktopTests : IDisposable
         Assert.Null(DesktopSessions.RootFromCwd("""{"cwd":"C:\\elsewhere"}""", "local_a"));
     }
 
+    (string A, string B) CoworkProfiles() =>
+        (Path.Combine(Account, "local-agent-mode-sessions", Acct, Org),
+         Path.Combine(Gateway3p, "local-agent-mode-sessions", "c0062ea9", "00000000"));
+
+    static void SeedCowork(string dir, string name, string? bodyName = null, long last = 100)
+    {
+        var body = Path.Combine(dir, bodyName ?? name);
+        // Use the pre-migration app view; encoding a long macOS temp path as
+        // one project-directory component would exceed the filesystem limit.
+        var cwd = Path.Combine(Path.GetPathRoot(dir)!, "old", "tasks", bodyName ?? name, "outputs");
+        Write(Path.Combine(body, "outputs", "result.txt"), "fixture output");
+        Write(Path.Combine(body, ".claude", "projects", DesktopSessions.Sanitize(cwd), "chat.jsonl"),
+              new JsonObject { ["cwd"] = cwd, ["text"] = "fixture conversation" }.ToJsonString());
+        Write(Path.Combine(body, "audit.jsonl"), "signed fixture: " + cwd);
+        Write(Path.Combine(dir, name + ".json"),
+              new JsonObject { ["sessionId"] = name, ["cwd"] = cwd, ["lastActivityAt"] = last }.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("", false)]
+    [InlineData("", true)]
+    [InlineData("agent", false)]
+    [InlineData("agent", true)]
+    public void Cowork_compatibility_copies_task_layouts(string section, bool shortBody)
+    {
+        var (a, b) = CoworkProfiles();
+        a = Path.Combine(a, section); b = Path.Combine(b, section);
+        const string name = "local_12345678-1111-2222-3333-444444444444";
+        SeedCowork(a, name, shortBody ? "12345678" : null);
+        Directory.CreateDirectory(b);
+        new DesktopSessions(Dp, _paths, _said.Add).SyncCowork(Path.Combine(_root, "bk"));
+        var cwd = Path.Combine(b, name, "outputs");
+        Assert.True(File.Exists(Path.Combine(b, name, "outputs", "result.txt")));
+        Assert.Equal(cwd, (string)Read(Path.Combine(b, name + ".json"))["cwd"]!);
+        var transcript = Path.Combine(b, name, ".claude", "projects", DesktopSessions.Sanitize(cwd), "chat.jsonl");
+        Assert.Equal(cwd, (string)Read(transcript)["cwd"]!);
+        Assert.Equal(File.ReadAllText(Path.Combine(a, shortBody ? "12345678" : name, "audit.jsonl")),
+                     File.ReadAllText(Path.Combine(b, name, "audit.jsonl")));
+    }
+
+    [Fact]
+    public void Cowork_compatibility_accepts_underscore_ids()
+    {
+        var (a, b) = CoworkProfiles();
+        SeedCowork(a, "local_ditto_12345678_g1");
+        Directory.CreateDirectory(b);
+        new DesktopSessions(Dp, _paths, _said.Add).SyncCowork(Path.Combine(_root, "bk"));
+        Assert.True(File.Exists(Path.Combine(b, "local_ditto_12345678_g1", "outputs", "result.txt")));
+    }
+
+    [Fact]
+    public void Cowork_compatibility_prefers_current_short_account_directory()
+    {
+        var (a, b) = CoworkProfiles();
+        var shortA = Path.Combine(Account, "local-agent-mode-sessions", Acct[..8], Org[..8]);
+        SeedCowork(a, "local_legacy"); SeedCowork(shortA, "local_current");
+        Directory.CreateDirectory(b);
+        new DesktopSessions(Dp, _paths, _said.Add).SyncCowork(Path.Combine(_root, "bk"));
+        Assert.True(File.Exists(Path.Combine(b, "local_current.json")));
+        Assert.False(File.Exists(Path.Combine(b, "local_legacy.json")));
+    }
+
+    [Fact]
+    public void Cowork_compatibility_repairs_metadata_only_copy()
+    {
+        var (a, b) = CoworkProfiles();
+        a = Path.Combine(a, "agent"); b = Path.Combine(b, "agent");
+        const string name = "local_12345678-1111-2222-3333-444444444444";
+        SeedCowork(a, name, "12345678");
+        Write(Path.Combine(b, name + ".json"), File.ReadAllText(Path.Combine(a, name + ".json")));
+        new DesktopSessions(Dp, _paths, _said.Add).SyncCowork(Path.Combine(_root, "bk"));
+        Assert.True(File.Exists(Path.Combine(b, name, "outputs", "result.txt")));
+        Assert.Equal(Path.Combine(b, name, "outputs"), (string)Read(Path.Combine(b, name + ".json"))["cwd"]!);
+    }
+
+    [Fact]
+    public void Cowork_compatibility_keeps_each_profile_deletion_ledger()
+    {
+        var (a, b) = CoworkProfiles();
+        SeedCowork(a, "local_task"); SeedCowork(b, "local_gateway");
+        var sessions = new DesktopSessions(Dp, _paths, _said.Add);
+        var bk = Path.Combine(_root, "bk");
+        sessions.SyncCowork(bk);
+        File.Delete(Path.Combine(b, "local_task.json"));
+        sessions.SyncCowork(bk);
+        var saved = Path.Combine(_root, "previous-profile");
+        Directory.Move(Path.GetDirectoryName(b)!, saved);
+        var next = Path.Combine(Gateway3p, "local-agent-mode-sessions", "bbbbbbbb", "00000000");
+        SeedCowork(next, "local_new");
+        sessions.SyncCowork(bk);
+        Assert.True(File.Exists(Path.Combine(next, "local_task.json")));
+        Directory.Move(Path.GetDirectoryName(next)!, Path.Combine(_root, "next-profile"));
+        Directory.Move(saved, Path.GetDirectoryName(b)!);
+        sessions.SyncCowork(bk);
+        Assert.False(File.Exists(Path.Combine(b, "local_task.json")));
+        Assert.True(File.Exists(Path.Combine(a, "local_task.json")));
+    }
+
+    [Fact]
+    public void Cowork_compatibility_reports_missing_body_and_retries()
+    {
+        var (a, b) = CoworkProfiles();
+        Write(Path.Combine(a, "local_task.json"), """{"lastActivityAt":100}""");
+        Directory.CreateDirectory(b);
+        var sessions = new DesktopSessions(Dp, _paths, _said.Add);
+        sessions.SyncCowork(Path.Combine(_root, "bk"));
+        Assert.False(File.Exists(Path.Combine(b, "local_task.json")));
+        Assert.DoesNotContain("local_task", File.ReadAllText(Path.Combine(_paths.ClaudeHome, "claude-mode-cowork-sync")));
+        SeedCowork(a, "local_task");
+        sessions.SyncCowork(Path.Combine(_root, "bk"));
+        Assert.True(File.Exists(Path.Combine(b, "local_task", "outputs", "result.txt")));
+    }
+
     // ---------- 和命令行一起切 ----------
     [Fact]
     public async Task Product_switches_cli_and_desktop_together()
